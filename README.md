@@ -1,6 +1,6 @@
-# APEX - Trading Journal & Financial Goal Tracker
+# Trading Journal & Financial Goal Tracker
 
-A sleek, institutional-grade Trading Journal, Goal Setup, and Personal Cashflow Tracker built with **Next.js (App Router)**, **Tailwind CSS**, and **PostgreSQL (Coolify dedicated persistent container)**.
+A sleek Trading Journal, Goal Setup, and Personal Cashflow Tracker built with **Next.js (App Router)**, **Tailwind CSS**, and **PostgreSQL (Coolify dedicated persistent container)**.
 
 ---
 

@@ -3,8 +3,8 @@ import "./globals.css";
 import React from "react";
 
 export const metadata: Metadata = {
-  title: "APEX - Trading & Goal Tracker",
-  description: "Personal institutional trading journal, goal milestones, and cashflow financial tracker",
+  title: "Trading & Goal Tracker",
+  description: "Personal trading journal, profit goals, and cashflow tracker",
 };
 
 export default function RootLayout({
