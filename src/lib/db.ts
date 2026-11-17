@@ -1,7 +1,19 @@
 import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
-import { Trade, Cashflow, Goal, DailySummary, DashboardStats, SignalProvider, SignalProviderStats } from "./types";
+import {
+  Trade,
+  Cashflow,
+  Goal,
+  DailySummary,
+  DashboardStats,
+  SignalProvider,
+  SignalProviderStats,
+  ExchangeConnection,
+  UserSettings,
+  DrawdownStats,
+} from "./types";
+import { BinanceClient, BybitClient, ExchangeSyncResult } from "./exchanges";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const LOCAL_STORE_FILE = path.join(DATA_DIR, "tracker_store.json");
@@ -38,6 +50,7 @@ interface LocalStore {
   goals: Goal[];
   dailySummaries: Record<string, DailySummary>;
   signal_providers: SignalProvider[];
+  exchange_connections: ExchangeConnection[];
   settings: Record<string, any>;
 }
 
@@ -52,6 +65,18 @@ function loadLocalStore(): LocalStore {
           { id: "sp_abc", name: "ABC Trader", notes: "Signals from ABC Trader", color: "violet", created_at: new Date().toISOString() },
           { id: "sp_xyz", name: "XYZ Trader", notes: "Signals from XYZ Trader", color: "emerald", created_at: new Date().toISOString() }
         ];
+      }
+      if (!parsed.exchange_connections) {
+        parsed.exchange_connections = [];
+      }
+      if (!parsed.settings) {
+        parsed.settings = {
+          initial_balance: 10000,
+          currency: "USD",
+          risk_percentage: 1.0,
+          default_leverage: 100,
+          max_drawdown_limit: 10,
+        };
       }
       return parsed;
     } catch (e) {
@@ -69,11 +94,13 @@ function loadLocalStore(): LocalStore {
       { id: "sp_abc", name: "ABC Trader", notes: "Signals from ABC Trader", color: "violet", created_at: new Date().toISOString() },
       { id: "sp_xyz", name: "XYZ Trader", notes: "Signals from XYZ Trader", color: "emerald", created_at: new Date().toISOString() }
     ],
+    exchange_connections: [],
     settings: {
-      account_balance: 10000,
+      initial_balance: 10000,
       currency: "USD",
       risk_percentage: 1.0,
       default_leverage: 100,
+      max_drawdown_limit: 10,
     },
   };
   saveLocalStore(initialStore);
@@ -119,8 +146,30 @@ async function initPostgresTables(client: any) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Ensure signal_provider column exists for existing tables
+    -- Ensure signal_provider, exchange, exchange_trade_id, and chart_image columns exist
     ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS signal_provider VARCHAR(100) DEFAULT 'Self';
+    ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS exchange VARCHAR(64) DEFAULT 'MANUAL';
+    ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS exchange_trade_id VARCHAR(128) DEFAULT NULL;
+    ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS chart_image TEXT DEFAULT '';
+
+    CREATE TABLE IF NOT EXISTS tracker_exchange_connections (
+      id VARCHAR(64) PRIMARY KEY,
+      exchange VARCHAR(32) NOT NULL,
+      name VARCHAR(64) NOT NULL,
+      api_key TEXT NOT NULL,
+      api_secret TEXT NOT NULL,
+      account_type VARCHAR(32) DEFAULT 'FUTURES',
+      is_active BOOLEAN DEFAULT TRUE,
+      last_synced_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS tracker_settings (
+      key VARCHAR(64) PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
     CREATE TABLE IF NOT EXISTS tracker_signal_providers (
       id VARCHAR(64) PRIMARY KEY,
@@ -183,6 +232,8 @@ async function initPostgresTables(client: any) {
     CREATE INDEX IF NOT EXISTS idx_tracker_trades_date ON tracker_trades(trade_date);
     CREATE INDEX IF NOT EXISTS idx_tracker_trades_symbol ON tracker_trades(symbol);
     CREATE INDEX IF NOT EXISTS idx_tracker_trades_signal_provider ON tracker_trades(signal_provider);
+    CREATE INDEX IF NOT EXISTS idx_tracker_trades_exchange ON tracker_trades(exchange);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_trades_exchange_trade_id ON tracker_trades(exchange_trade_id) WHERE exchange_trade_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_tracker_cashflow_date ON tracker_cashflows(date);
   `);
 }
@@ -224,6 +275,7 @@ export async function getTrades(filters?: {
   startDate?: string;
   endDate?: string;
   signal_provider?: string;
+  exchange?: string;
 }): Promise<Trade[]> {
   const { isPostgres } = await checkConnection();
 
@@ -257,12 +309,19 @@ export async function getTrades(filters?: {
         values.push(filters.signal_provider.toUpperCase());
       }
     }
+    if (filters?.exchange) {
+      query += ` AND UPPER(exchange) = $${idx++}`;
+      values.push(filters.exchange.toUpperCase());
+    }
 
     query += " ORDER BY trade_date DESC";
     const res = await p.query(query, values);
     return res.rows.map((r: any) => ({
       ...r,
       signal_provider: r.signal_provider || "Self",
+      exchange: r.exchange || "MANUAL",
+      exchange_trade_id: r.exchange_trade_id || null,
+      chart_image: r.chart_image || "",
       tags: typeof r.tags === "string" ? JSON.parse(r.tags || "[]") : r.tags || [],
       trade_date: new Date(r.trade_date).toISOString(),
       closed_date: r.closed_date ? new Date(r.closed_date).toISOString() : null,
@@ -294,6 +353,9 @@ export async function getTrades(filters?: {
         );
       }
     }
+    if (filters?.exchange) {
+      result = result.filter((t) => (t.exchange || "MANUAL").toUpperCase() === filters.exchange?.toUpperCase());
+    }
 
     return result.sort((a, b) => new Date(b.trade_date).getTime() - new Date(a.trade_date).getTime());
   }
@@ -310,6 +372,9 @@ export async function getTradeById(id: string): Promise<Trade | null> {
     return {
       ...r,
       signal_provider: r.signal_provider || "Self",
+      exchange: r.exchange || "MANUAL",
+      exchange_trade_id: r.exchange_trade_id || null,
+      chart_image: r.chart_image || "",
       tags: typeof r.tags === "string" ? JSON.parse(r.tags || "[]") : r.tags || [],
       trade_date: new Date(r.trade_date).toISOString(),
       closed_date: r.closed_date ? new Date(r.closed_date).toISOString() : null,
@@ -322,9 +387,42 @@ export async function getTradeById(id: string): Promise<Trade | null> {
   }
 }
 
+export async function getTradeByExchangeId(exchangeTradeId: string): Promise<Trade | null> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT * FROM tracker_trades WHERE exchange_trade_id = $1 LIMIT 1", [exchangeTradeId]);
+    if (res.rows.length === 0) return null;
+    const r = res.rows[0];
+    return {
+      ...r,
+      signal_provider: r.signal_provider || "Self",
+      exchange: r.exchange || "MANUAL",
+      exchange_trade_id: r.exchange_trade_id || null,
+      chart_image: r.chart_image || "",
+      tags: typeof r.tags === "string" ? JSON.parse(r.tags || "[]") : r.tags || [],
+      trade_date: new Date(r.trade_date).toISOString(),
+      closed_date: r.closed_date ? new Date(r.closed_date).toISOString() : null,
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: new Date(r.updated_at).toISOString(),
+    };
+  } else {
+    const store = loadLocalStore();
+    return store.trades.find((t) => t.exchange_trade_id === exchangeTradeId) || null;
+  }
+}
+
 export async function createTrade(trade: Trade): Promise<Trade> {
   const { isPostgres } = await checkConnection();
   const provider = trade.signal_provider?.trim() || "Self";
+  const exchange = trade.exchange?.trim().toUpperCase() || "MANUAL";
+  const exchangeTradeId = trade.exchange_trade_id?.trim() || null;
+  const chartImage = trade.chart_image?.trim() || "";
+
+  if (exchangeTradeId) {
+    const existing = await getTradeByExchangeId(exchangeTradeId);
+    if (existing) return existing;
+  }
 
   if (isPostgres) {
     const p = getPool();
@@ -332,9 +430,9 @@ export async function createTrade(trade: Trade): Promise<Trade> {
       `INSERT INTO tracker_trades (
         id, symbol, market, direction, entry_price, exit_price, stop_loss, take_profit,
         quantity, pnl, pnl_percentage, status, trade_date, closed_date, timeframe,
-        session, strategy, signal_provider, reason_entry, reason_outcome, lessons_learned, emotions_notes,
-        chart_url, tags, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
+        session, strategy, signal_provider, exchange, exchange_trade_id, reason_entry, reason_outcome, lessons_learned, emotions_notes,
+        chart_url, chart_image, tags, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29)`,
       [
         trade.id,
         trade.symbol.toUpperCase(),
@@ -354,11 +452,14 @@ export async function createTrade(trade: Trade): Promise<Trade> {
         trade.session || "",
         trade.strategy || "",
         provider,
+        exchange,
+        exchangeTradeId,
         trade.reason_entry || "",
         trade.reason_outcome || "",
         trade.lessons_learned || "",
         trade.emotions_notes || "",
         trade.chart_url || "",
+        chartImage,
         JSON.stringify(trade.tags || []),
         trade.created_at || new Date().toISOString(),
         trade.updated_at || new Date().toISOString(),
@@ -366,7 +467,14 @@ export async function createTrade(trade: Trade): Promise<Trade> {
     );
   } else {
     const store = loadLocalStore();
-    store.trades.unshift({ ...trade, signal_provider: provider });
+    const tradeWithExtras = {
+      ...trade,
+      signal_provider: provider,
+      exchange,
+      exchange_trade_id: exchangeTradeId,
+      chart_image: chartImage,
+    };
+    store.trades.unshift(tradeWithExtras);
     saveLocalStore(store);
   }
 
@@ -378,7 +486,13 @@ export async function createTrade(trade: Trade): Promise<Trade> {
   await syncDailySummary(dateKey);
   await syncGoals();
 
-  return { ...trade, signal_provider: provider };
+  return {
+    ...trade,
+    signal_provider: provider,
+    exchange,
+    exchange_trade_id: exchangeTradeId,
+    chart_image: chartImage,
+  };
 }
 
 export async function updateTrade(id: string, updates: Partial<Trade>): Promise<Trade | null> {
@@ -389,11 +503,21 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
     updates.signal_provider !== undefined
       ? updates.signal_provider?.trim() || "Self"
       : existing.signal_provider || "Self";
+  const exchange =
+    updates.exchange !== undefined
+      ? updates.exchange?.trim().toUpperCase() || "MANUAL"
+      : existing.exchange || "MANUAL";
+  const chartImage =
+    updates.chart_image !== undefined
+      ? updates.chart_image?.trim() || ""
+      : existing.chart_image || "";
 
   const updated: Trade = {
     ...existing,
     ...updates,
     signal_provider: provider,
+    exchange,
+    chart_image: chartImage,
     updated_at: new Date().toISOString(),
   };
 
@@ -406,9 +530,9 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
         symbol = $1, market = $2, direction = $3, entry_price = $4, exit_price = $5,
         stop_loss = $6, take_profit = $7, quantity = $8, pnl = $9, pnl_percentage = $10,
         status = $11, trade_date = $12, closed_date = $13, timeframe = $14, session = $15,
-        strategy = $16, signal_provider = $17, reason_entry = $18, reason_outcome = $19, lessons_learned = $20,
-        emotions_notes = $21, chart_url = $22, tags = $23, updated_at = $24
-      WHERE id = $25`,
+        strategy = $16, signal_provider = $17, exchange = $18, reason_entry = $19, reason_outcome = $20,
+        lessons_learned = $21, emotions_notes = $22, chart_url = $23, chart_image = $24, tags = $25, updated_at = $26
+      WHERE id = $27`,
       [
         updated.symbol.toUpperCase(),
         updated.market || "FOREX",
@@ -427,11 +551,13 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
         updated.session || "",
         updated.strategy || "",
         provider,
+        exchange,
         updated.reason_entry || "",
         updated.reason_outcome || "",
         updated.lessons_learned || "",
         updated.emotions_notes || "",
         updated.chart_url || "",
+        chartImage,
         JSON.stringify(updated.tags || []),
         updated.updated_at,
         id,
@@ -894,6 +1020,9 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   const average_win = won_trades > 0 ? Number((total_profit / won_trades).toFixed(2)) : 0;
   const average_loss = lost_trades > 0 ? Number((total_loss / lost_trades).toFixed(2)) : 0;
 
+  const settings = await getUserSettings();
+  const starting_balance = Number(settings.initial_balance || 10000);
+
   let total_withdrawn = 0;
   let total_spent = 0;
   let total_deposits = 0;
@@ -905,22 +1034,79 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     else if (c.type === "DEPOSIT") total_deposits += amt;
   }
 
+  const net_cashflow = total_deposits - total_withdrawn;
   const net_cash_extracted = total_withdrawn - total_deposits;
+  const current_balance = Number((starting_balance + net_pnl + net_cashflow).toFixed(2));
 
   const sortedDates = Object.keys(dailyPnlMap).sort();
   let cumulative = 0;
+  let runningBalance = starting_balance;
+  let peakEquity = starting_balance;
+  let maxDrawdownPct = 0;
+  let maxDrawdownAmount = 0;
+
   const equity_curve = sortedDates.map((date) => {
-    cumulative += dailyPnlMap[date];
+    const dayPnl = dailyPnlMap[date];
+    cumulative += dayPnl;
+    runningBalance += dayPnl;
+
+    if (runningBalance > peakEquity) {
+      peakEquity = runningBalance;
+    }
+
+    const ddAmount = Math.max(0, peakEquity - runningBalance);
+    const ddPct = peakEquity > 0 ? (ddAmount / peakEquity) * 100 : 0;
+
+    if (ddPct > maxDrawdownPct) maxDrawdownPct = ddPct;
+    if (ddAmount > maxDrawdownAmount) maxDrawdownAmount = ddAmount;
+
     return {
       date,
-      daily_pnl: Number(dailyPnlMap[date].toFixed(2)),
+      daily_pnl: Number(dayPnl.toFixed(2)),
       cumulative_pnl: Number(cumulative.toFixed(2)),
+      balance: Number(runningBalance.toFixed(2)),
     };
   });
+
+  const currentDdAmount = Math.max(0, peakEquity - current_balance);
+  const currentDdPct = peakEquity > 0 ? Number(((currentDdAmount / peakEquity) * 100).toFixed(2)) : 0;
+
+  const drawdown: DrawdownStats = {
+    current_balance,
+    starting_balance,
+    peak_equity: Number(peakEquity.toFixed(2)),
+    current_drawdown_pct: currentDdPct,
+    current_drawdown_amount: Number(currentDdAmount.toFixed(2)),
+    max_drawdown_pct: Number(maxDrawdownPct.toFixed(2)),
+    max_drawdown_amount: Number(maxDrawdownAmount.toFixed(2)),
+    net_closed_pnl: Number(net_pnl.toFixed(2)),
+    net_cashflow: Number(net_cashflow.toFixed(2)),
+  };
 
   const pair_distribution = Object.entries(pairStats)
     .map(([symbol, data]) => ({
       symbol,
+      pnl: Number(data.pnl.toFixed(2)),
+      count: data.count,
+      win_rate: data.count > 0 ? Number(((data.wins / data.count) * 100).toFixed(1)) : 0,
+    }))
+    .sort((a, b) => b.pnl - a.pnl);
+
+  // Exchange breakdown
+  const exchangeStats: Record<string, { pnl: number; count: number; wins: number }> = {};
+  for (const t of trades) {
+    const ex = (t.exchange?.trim() || "MANUAL").toUpperCase();
+    if (!exchangeStats[ex]) exchangeStats[ex] = { pnl: 0, count: 0, wins: 0 };
+    exchangeStats[ex].count += 1;
+    exchangeStats[ex].pnl += Number(t.pnl || 0);
+    if (t.status === "WON" || Number(t.pnl || 0) > 0) {
+      exchangeStats[ex].wins += 1;
+    }
+  }
+
+  const exchange_distribution = Object.entries(exchangeStats)
+    .map(([exchange, data]) => ({
+      exchange,
       pnl: Number(data.pnl.toFixed(2)),
       count: data.count,
       win_rate: data.count > 0 ? Number(((data.wins / data.count) * 100).toFixed(1)) : 0,
@@ -947,9 +1133,11 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     average_loss,
     largest_win: Number(largest_win.toFixed(2)),
     largest_loss: Number(largest_loss.toFixed(2)),
+    drawdown,
     equity_curve,
     pair_distribution,
     provider_distribution,
+    exchange_distribution,
   };
 }
 
@@ -1183,4 +1371,268 @@ export async function getSignalProviderStats(): Promise<SignalProviderStats[]> {
     if (b.is_self) return 1;
     return b.total_pnl - a.total_pnl;
   });
+}
+
+// -----------------------------------------------------------------------------
+// USER SETTINGS API
+// -----------------------------------------------------------------------------
+const DEFAULT_SETTINGS: UserSettings = {
+  initial_balance: 10000,
+  currency: "USD",
+  risk_percentage: 1.0,
+  default_leverage: 100,
+  max_drawdown_limit: 10,
+};
+
+export async function getUserSettings(): Promise<UserSettings> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT value FROM tracker_settings WHERE key = 'user_settings'");
+    if (res.rows.length > 0 && res.rows[0].value) {
+      return { ...DEFAULT_SETTINGS, ...res.rows[0].value };
+    }
+    return DEFAULT_SETTINGS;
+  } else {
+    const store = loadLocalStore();
+    return { ...DEFAULT_SETTINGS, ...(store.settings || {}) };
+  }
+}
+
+export async function updateUserSettings(updates: Partial<UserSettings>): Promise<UserSettings> {
+  const current = await getUserSettings();
+  const updated: UserSettings = { ...current, ...updates };
+
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_settings (key, value, updated_at)
+       VALUES ('user_settings', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify(updated)]
+    );
+  } else {
+    const store = loadLocalStore();
+    store.settings = updated;
+    saveLocalStore(store);
+  }
+  return updated;
+}
+
+// -----------------------------------------------------------------------------
+// EXCHANGE CONNECTIONS & AUTO-SYNC API
+// -----------------------------------------------------------------------------
+export async function getExchangeConnections(): Promise<ExchangeConnection[]> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT * FROM tracker_exchange_connections ORDER BY created_at ASC");
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      exchange: r.exchange,
+      name: r.name,
+      api_key: r.api_key,
+      api_secret: r.api_secret,
+      account_type: r.account_type || "FUTURES",
+      is_active: r.is_active ?? true,
+      last_synced_at: r.last_synced_at ? new Date(r.last_synced_at).toISOString() : null,
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    }));
+  } else {
+    const store = loadLocalStore();
+    return store.exchange_connections || [];
+  }
+}
+
+export async function saveExchangeConnection(conn: Partial<ExchangeConnection>): Promise<ExchangeConnection> {
+  const { isPostgres } = await checkConnection();
+  const now = new Date().toISOString();
+  const id = conn.id || `conn_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const exchange = conn.exchange || "binance";
+  const name = conn.name?.trim() || `${exchange.toUpperCase()} Connection`;
+  const api_key = conn.api_key?.trim() || "";
+  const api_secret = conn.api_secret?.trim() || "";
+  const account_type = conn.account_type || "FUTURES";
+  const is_active = conn.is_active ?? true;
+
+  const item: ExchangeConnection = {
+    id,
+    exchange,
+    name,
+    api_key,
+    api_secret,
+    account_type,
+    is_active,
+    last_synced_at: conn.last_synced_at || null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_exchange_connections (id, exchange, name, api_key, api_secret, account_type, is_active, last_synced_at, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (id) DO UPDATE SET exchange = EXCLUDED.exchange, name = EXCLUDED.name, api_key = EXCLUDED.api_key, api_secret = EXCLUDED.api_secret, account_type = EXCLUDED.account_type, is_active = EXCLUDED.is_active, updated_at = NOW()`,
+      [id, exchange, name, api_key, api_secret, account_type, is_active, item.last_synced_at, now, now]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.exchange_connections) store.exchange_connections = [];
+    const idx = store.exchange_connections.findIndex((c) => c.id === id);
+    if (idx !== -1) {
+      store.exchange_connections[idx] = item;
+    } else {
+      store.exchange_connections.push(item);
+    }
+    saveLocalStore(store);
+  }
+  return item;
+}
+
+export async function deleteExchangeConnection(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query("DELETE FROM tracker_exchange_connections WHERE id = $1", [id]);
+    return true;
+  } else {
+    const store = loadLocalStore();
+    if (!store.exchange_connections) return false;
+    store.exchange_connections = store.exchange_connections.filter((c) => c.id !== id);
+    saveLocalStore(store);
+    return true;
+  }
+}
+
+export async function syncExchange(id: string): Promise<ExchangeSyncResult> {
+  const connections = await getExchangeConnections();
+  const conn = connections.find((c) => c.id === id);
+  if (!conn) {
+    return { success: false, exchange: "unknown", importedTrades: 0, importedCashflows: 0, message: "Connection not found" };
+  }
+
+  let importedTrades = 0;
+  let importedCashflows = 0;
+  let liveBalance: number | undefined;
+
+  try {
+    if (conn.exchange === "binance") {
+      const client = new BinanceClient(conn.api_key, conn.api_secret);
+      const test = await client.testConnection();
+      if (!test.success) {
+        return { success: false, exchange: "binance", importedTrades: 0, importedCashflows: 0, message: test.message };
+      }
+      liveBalance = test.balance;
+
+      const rawTrades = await client.getFuturesRealizedTrades(100);
+      for (const t of rawTrades) {
+        if (!t.exchange_trade_id) continue;
+        const existing = await getTradeByExchangeId(t.exchange_trade_id);
+        if (!existing) {
+          const now = new Date().toISOString();
+          const newTrade: Trade = {
+            id: `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            symbol: t.symbol || "BTCUSDT",
+            market: "CRYPTO",
+            direction: t.direction || "LONG",
+            pnl: t.pnl || 0,
+            status: t.status || "OPEN",
+            trade_date: t.trade_date || now,
+            exchange: "BINANCE",
+            exchange_trade_id: t.exchange_trade_id,
+            strategy: "Exchange Auto-Sync",
+            signal_provider: "Self",
+            reason_entry: t.reason_entry || "Auto-synced from Binance",
+            reason_outcome: t.reason_outcome || "",
+            created_at: now,
+            updated_at: now,
+          };
+          await createTrade(newTrade);
+          importedTrades++;
+        }
+      }
+    } else if (conn.exchange === "bybit") {
+      const client = new BybitClient(conn.api_key, conn.api_secret);
+      const test = await client.testConnection();
+      if (!test.success) {
+        return { success: false, exchange: "bybit", importedTrades: 0, importedCashflows: 0, message: test.message };
+      }
+      liveBalance = test.balance;
+
+      const rawTrades = await client.getClosedPnL(100);
+      for (const t of rawTrades) {
+        if (!t.exchange_trade_id) continue;
+        const existing = await getTradeByExchangeId(t.exchange_trade_id);
+        if (!existing) {
+          const now = new Date().toISOString();
+          const newTrade: Trade = {
+            id: `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            symbol: t.symbol || "BTCUSDT",
+            market: "CRYPTO",
+            direction: t.direction || "LONG",
+            entry_price: t.entry_price,
+            exit_price: t.exit_price,
+            quantity: t.quantity,
+            pnl: t.pnl || 0,
+            status: t.status || "OPEN",
+            trade_date: t.trade_date || now,
+            exchange: "BYBIT",
+            exchange_trade_id: t.exchange_trade_id,
+            strategy: "Exchange Auto-Sync",
+            signal_provider: "Self",
+            reason_entry: t.reason_entry || "Auto-synced from Bybit",
+            reason_outcome: t.reason_outcome || "",
+            created_at: now,
+            updated_at: now,
+          };
+          await createTrade(newTrade);
+          importedTrades++;
+        }
+      }
+    }
+
+    // Update connection last_synced_at
+    const now = new Date().toISOString();
+    const { isPostgres } = await checkConnection();
+    if (isPostgres) {
+      const p = getPool();
+      await p.query("UPDATE tracker_exchange_connections SET last_synced_at = NOW(), updated_at = NOW() WHERE id = $1", [id]);
+    } else {
+      const store = loadLocalStore();
+      const idx = store.exchange_connections.findIndex((c) => c.id === id);
+      if (idx !== -1) {
+        store.exchange_connections[idx].last_synced_at = now;
+        saveLocalStore(store);
+      }
+    }
+
+    return {
+      success: true,
+      exchange: conn.exchange,
+      importedTrades,
+      importedCashflows,
+      liveBalance,
+      message: `Sync complete! Imported ${importedTrades} new closed trade(s).`,
+    };
+  } catch (err: any) {
+    return { success: false, exchange: conn.exchange, importedTrades: 0, importedCashflows: 0, message: err.message };
+  }
+}
+
+export async function syncAllExchanges(): Promise<{ results: ExchangeSyncResult[]; totalImported: number }> {
+  const connections = await getExchangeConnections();
+  const active = connections.filter((c) => c.is_active);
+  const results: ExchangeSyncResult[] = [];
+  let totalImported = 0;
+
+  for (const c of active) {
+    const res = await syncExchange(c.id);
+    results.push(res);
+    totalImported += res.importedTrades;
+  }
+
+  return { results, totalImported };
 }

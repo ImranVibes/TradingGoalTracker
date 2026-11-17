@@ -21,11 +21,14 @@ export interface Trade {
   session?: string;
   strategy?: string;
   signal_provider?: string;
+  exchange?: string;
+  exchange_trade_id?: string;
   reason_entry?: string;
   reason_outcome?: string;
   lessons_learned?: string;
   emotions_notes?: string;
   chart_url?: string;
+  chart_image?: string;
   tags?: string[];
   created_at: string;
   updated_at: string;
@@ -115,6 +118,39 @@ export interface SignalProviderStats {
   recent_trades?: Trade[];
 }
 
+export interface ExchangeConnection {
+  id: string;
+  exchange: "binance" | "bybit";
+  name: string;
+  api_key: string;
+  api_secret: string;
+  account_type: "SPOT" | "FUTURES" | "ALL";
+  is_active: boolean;
+  last_synced_at?: string | null;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface UserSettings {
+  initial_balance: number;
+  currency: string;
+  risk_percentage: number;
+  default_leverage: number;
+  max_drawdown_limit?: number;
+}
+
+export interface DrawdownStats {
+  current_balance: number;
+  starting_balance: number;
+  peak_equity: number;
+  current_drawdown_pct: number;
+  current_drawdown_amount: number;
+  max_drawdown_pct: number;
+  max_drawdown_amount: number;
+  net_closed_pnl: number;
+  net_cashflow: number;
+}
+
 export interface DashboardStats {
   net_pnl: number;
   total_profit: number;
@@ -133,10 +169,12 @@ export interface DashboardStats {
   average_loss: number;
   largest_win: number;
   largest_loss: number;
+  drawdown: DrawdownStats;
   equity_curve: {
     date: string;
     cumulative_pnl: number;
     daily_pnl: number;
+    balance?: number;
   }[];
   pair_distribution: {
     symbol: string;
@@ -145,4 +183,10 @@ export interface DashboardStats {
     win_rate: number;
   }[];
   provider_distribution: SignalProviderStats[];
+  exchange_distribution: {
+    exchange: string;
+    pnl: number;
+    count: number;
+    win_rate: number;
+  }[];
 }

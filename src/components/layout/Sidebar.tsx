@@ -12,6 +12,7 @@ import {
   BarChart3,
   Calculator,
   Radio,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -55,6 +56,11 @@ const NAV_ITEMS = [
     name: "Performance Analytics",
     href: "/analytics",
     icon: BarChart3,
+  },
+  {
+    name: "Exchange & Settings",
+    href: "/settings",
+    icon: Settings,
   },
 ];
 

@@ -3,9 +3,21 @@
 import React, { useState, useEffect } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
-import { Trade, TradeDirection, TradeStatus, MarketType } from "@/lib/types";
+import { Trade, TradeDirection, TradeStatus } from "@/lib/types";
 import { toDateInputValue, calculateRR } from "@/lib/utils";
-import { TrendingUp, TrendingDown, ChevronDown, ChevronUp, User, Radio, Plus } from "lucide-react";
+import {
+  TrendingUp,
+  TrendingDown,
+  User,
+  Radio,
+  Plus,
+  Zap,
+  SlidersHorizontal,
+  Building2,
+  Image,
+  UploadCloud,
+  Trash2,
+} from "lucide-react";
 
 interface TradeFormModalProps {
   isOpen: boolean;
@@ -14,8 +26,17 @@ interface TradeFormModalProps {
   editTrade?: Trade | null;
 }
 
-const COMMON_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSDT", "ETHUSDT", "NAS100", "US30"];
+const COMMON_SYMBOLS = ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSDT", "ETHUSDT", "SOLUSDT", "NAS100", "US30"];
 const STRATEGY_SUGGESTIONS = ["Breakout", "Order Block", "FVG", "Trend Continuation", "Scalp", "News", "Reversal"];
+const COMMON_EXCHANGES = [
+  { id: "BINANCE", name: "Binance" },
+  { id: "BYBIT", name: "Bybit" },
+  { id: "METATRADER", name: "MetaTrader" },
+  { id: "OKX", name: "OKX" },
+  { id: "BITGET", name: "Bitget" },
+  { id: "WALLET", name: "DEX / Wallet" },
+  { id: "MANUAL", name: "Manual / Other" },
+];
 
 export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   isOpen,
@@ -23,20 +44,21 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   onSuccess,
   editTrade,
 }) => {
-  const [symbol, setSymbol] = useState("EURUSD");
+  const [activeMode, setActiveMode] = useState<"quick" | "full">("quick");
+  const [symbol, setSymbol] = useState("BTCUSDT");
   const [direction, setDirection] = useState<TradeDirection>("LONG");
   const [pnl, setPnl] = useState("");
   const [status, setStatus] = useState<TradeStatus>("WON");
   const [tradeDate, setTradeDate] = useState(toDateInputValue());
   const [strategy, setStrategy] = useState("");
+  const [exchange, setExchange] = useState("BINANCE");
   const [reasonEntry, setReasonEntry] = useState("");
   const [reasonOutcome, setReasonOutcome] = useState("");
   const [signalProvider, setSignalProvider] = useState("Self");
   const [providers, setProviders] = useState<{ id: string; name: string; color?: string }[]>([]);
   const [isAddingCustomProvider, setIsAddingCustomProvider] = useState(false);
 
-  // Optional execution details toggle
-  const [showDetails, setShowDetails] = useState(false);
+  // Full execution details
   const [entryPrice, setEntryPrice] = useState("");
   const [exitPrice, setExitPrice] = useState("");
   const [stopLoss, setStopLoss] = useState("");
@@ -44,6 +66,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [quantity, setQuantity] = useState("1.0");
   const [timeframe, setTimeframe] = useState("1h");
   const [chartUrl, setChartUrl] = useState("");
+  const [chartImage, setChartImage] = useState("");
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +91,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setStatus(editTrade.status);
       setTradeDate(toDateInputValue(editTrade.trade_date));
       setStrategy(editTrade.strategy || "");
+      setExchange(editTrade.exchange || "BINANCE");
       setSignalProvider(editTrade.signal_provider || "Self");
       setReasonEntry(editTrade.reason_entry || "");
       setReasonOutcome(editTrade.reason_outcome || "");
@@ -77,8 +102,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setQuantity(editTrade.quantity ? String(editTrade.quantity) : "1.0");
       setTimeframe(editTrade.timeframe || "1h");
       setChartUrl(editTrade.chart_url || "");
-      if (editTrade.entry_price || editTrade.exit_price || editTrade.chart_url) {
-        setShowDetails(true);
+      setChartImage(editTrade.chart_image || "");
+      if (editTrade.entry_price || editTrade.exit_price || editTrade.stop_loss) {
+        setActiveMode("full");
       }
     } else {
       resetForm();
@@ -86,12 +112,13 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   }, [editTrade, isOpen]);
 
   const resetForm = () => {
-    setSymbol("EURUSD");
+    setSymbol("BTCUSDT");
     setDirection("LONG");
     setPnl("");
     setStatus("WON");
     setTradeDate(toDateInputValue());
     setStrategy("");
+    setExchange("BINANCE");
     setSignalProvider("Self");
     setIsAddingCustomProvider(false);
     setReasonEntry("");
@@ -103,7 +130,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     setQuantity("1.0");
     setTimeframe("1h");
     setChartUrl("");
-    setShowDetails(false);
+    setChartImage("");
+    setActiveMode("quick");
     setError(null);
   };
 
@@ -119,6 +147,72 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       else if (calculatedPnl < 0) setStatus("LOST");
       else setStatus("BREAKEVEN");
     }
+  };
+
+  const handlePasteImage = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") !== -1) {
+        const file = items[i].getAsFile();
+        if (!file) continue;
+
+        setUploadingImage(true);
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          const base64 = event.target?.result as string;
+          try {
+            const res = await fetch("/api/upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ image: base64 }),
+            });
+            const data = await res.json();
+            if (data.success && data.url) {
+              setChartImage(data.url);
+            } else {
+              setChartImage(base64);
+            }
+          } catch {
+            setChartImage(base64);
+          } finally {
+            setUploadingImage(false);
+          }
+        };
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingImage(true);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      try {
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64 }),
+        });
+        const data = await res.json();
+        if (data.success && data.url) {
+          setChartImage(data.url);
+        } else {
+          setChartImage(base64);
+        }
+      } catch {
+        setChartImage(base64);
+      } finally {
+        setUploadingImage(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -139,6 +233,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         status,
         trade_date: new Date(tradeDate).toISOString(),
         strategy: strategy.trim(),
+        exchange,
         signal_provider: signalProvider.trim() || "Self",
         reason_entry: reasonEntry.trim(),
         reason_outcome: reasonOutcome.trim(),
@@ -149,6 +244,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         quantity: parseFloat(quantity) || 1,
         timeframe: timeframe || "1h",
         chart_url: chartUrl.trim(),
+        chart_image: chartImage.trim(),
       };
 
       const url = editTrade ? `/api/trades/${editTrade.id}` : "/api/trades";
@@ -188,12 +284,40 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       title={editTrade ? `Edit Trade: ${editTrade.symbol}` : "Log Trade"}
       maxWidth="xl"
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} onPaste={handlePasteImage} className="space-y-4">
         {error && (
           <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
             {error}
           </div>
         )}
+
+        {/* Visual Mode Selector Tabs */}
+        <div className="flex items-center gap-1 p-1 bg-slate-900 border border-slate-800 rounded-xl">
+          <button
+            type="button"
+            onClick={() => setActiveMode("quick")}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeMode === "quick"
+                ? "bg-slate-800 text-white shadow-sm border border-slate-700"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            Quick P&L Entry
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveMode("full")}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all flex items-center justify-center gap-2 ${
+              activeMode === "full"
+                ? "bg-slate-800 text-white shadow-sm border border-slate-700"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
+            Full Execution (Entry, Exit, SL, TP)
+          </button>
+        </div>
 
         {/* Trade Source / Signal Provider */}
         <div className="rounded-xl border border-slate-800 bg-[#0b101d] p-3">
@@ -208,7 +332,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5">
-            {/* Self button */}
             <button
               type="button"
               onClick={() => {
@@ -225,7 +348,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               Self (My Own Trade)
             </button>
 
-            {/* Followed traders */}
             {providers.map((p) => {
               const isSelected =
                 signalProvider.toLowerCase() === p.name.toLowerCase() && !isAddingCustomProvider;
@@ -249,7 +371,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               );
             })}
 
-            {/* Add or other trader */}
             <button
               type="button"
               onClick={() => {
@@ -269,7 +390,6 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             </button>
           </div>
 
-          {/* Inline custom name input */}
           {isAddingCustomProvider && (
             <div className="mt-2.5 pt-2.5 border-t border-slate-800 flex items-center gap-2">
               <input
@@ -285,6 +405,30 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           )}
         </div>
 
+        {/* Exchange Selector */}
+        <div>
+          <label className="block text-xs font-medium text-slate-300 mb-1 flex items-center gap-1.5">
+            <Building2 className="w-3.5 h-3.5 text-amber-400" />
+            Exchange / Platform
+          </label>
+          <div className="flex flex-wrap gap-1.5">
+            {COMMON_EXCHANGES.map((ex) => (
+              <button
+                key={ex.id}
+                type="button"
+                onClick={() => setExchange(ex.id)}
+                className={`text-xs px-2.5 py-1 rounded-lg border font-medium transition-all ${
+                  exchange === ex.id
+                    ? "bg-amber-500/20 text-amber-300 border-amber-500/60 font-bold"
+                    : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white"
+                }`}
+              >
+                {ex.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Currency & Direction */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -294,10 +438,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
               required
               value={symbol}
               onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              placeholder="EURUSD, Gold, BTC..."
+              placeholder="BTCUSDT, EURUSD, XAUUSD..."
               className="w-full rounded-xl bg-slate-900 border border-slate-700/80 px-3 py-2 text-sm text-white font-mono uppercase focus:border-sky-500 focus:outline-none"
             />
-            {/* Quick chips */}
             <div className="flex flex-wrap gap-1 mt-1.5">
               {COMMON_SYMBOLS.map((s) => (
                 <button
@@ -399,7 +542,98 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           </div>
         </div>
 
-        {/* Flexible Strategy Tag (Not fixed dropdown!) */}
+        {/* Full Execution Details (when Full mode is active) */}
+        {activeMode === "full" && (
+          <div className="p-3.5 space-y-3 bg-[#0c1322] border border-slate-800 rounded-xl">
+            <div className="flex items-center justify-between text-xs text-sky-400 font-semibold">
+              <span>Execution Prices, Lot Size & R:R</span>
+              {rrRatio && (
+                <span className="font-mono bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
+                  Risk/Reward: 1:{rrRatio}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1">Entry Price</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={entryPrice}
+                  onChange={(e) => setEntryPrice(e.target.value)}
+                  placeholder="65000"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Exit Price</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={exitPrice}
+                  onChange={(e) => setExitPrice(e.target.value)}
+                  onBlur={handleAutoCalcPnl}
+                  placeholder="67500"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Stop Loss</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={stopLoss}
+                  onChange={(e) => setStopLoss(e.target.value)}
+                  placeholder="64000"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Take Profit</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={takeProfit}
+                  onChange={(e) => setTakeProfit(e.target.value)}
+                  placeholder="70000"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1">Lot Size / Quantity</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  placeholder="1.0"
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
+                />
+              </div>
+              <div>
+                <label className="text-slate-400 block mb-1">Timeframe</label>
+                <select
+                  value={timeframe}
+                  onChange={(e) => setTimeframe(e.target.value)}
+                  className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-white text-xs"
+                >
+                  <option value="1m">1m</option>
+                  <option value="5m">5m</option>
+                  <option value="15m">15m</option>
+                  <option value="1h">1h</option>
+                  <option value="4h">4h</option>
+                  <option value="1d">Daily</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Strategy Name */}
         <div>
           <label className="block text-xs font-medium text-slate-300 mb-1">
             Strategy / Setup Name (Optional)
@@ -408,7 +642,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             type="text"
             value={strategy}
             onChange={(e) => setStrategy(e.target.value)}
-            placeholder="Type any custom strategy, e.g. Asian Breakout, Retest, Scalp..."
+            placeholder="Type any custom strategy, e.g. Asian Breakout, Retest, FVG, Scalp..."
             className="w-full rounded-xl bg-slate-900 border border-slate-700/80 px-3 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none"
           />
           <div className="flex flex-wrap gap-1 mt-1.5">
@@ -457,104 +691,54 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
           />
         </div>
 
-        {/* Optional Execution Details Collapsible */}
-        <div className="border border-slate-800 rounded-xl overflow-hidden">
-          <button
-            type="button"
-            onClick={() => setShowDetails(!showDetails)}
-            className="w-full flex items-center justify-between p-3 text-xs font-semibold text-slate-400 hover:text-slate-200 bg-slate-900/50"
-          >
-            <span>Exact Prices & Sizing (Optional)</span>
-            {showDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-          </button>
+        {/* Direct Image / Chart Upload & Clipboard Paste (Ctrl+V) */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+              <Image className="w-3.5 h-3.5 text-sky-400" />
+              Chart Screenshot (Direct Clipboard Paste or Upload)
+            </label>
+            {chartImage && (
+              <button
+                type="button"
+                onClick={() => setChartImage("")}
+                className="text-[11px] text-rose-400 hover:underline flex items-center gap-1"
+              >
+                <Trash2 className="w-3 h-3" /> Remove image
+              </button>
+            )}
+          </div>
 
-          {showDetails && (
-            <div className="p-3.5 space-y-3 bg-slate-900/30 border-t border-slate-800">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                <div>
-                  <label className="text-slate-400 block mb-1">Entry Price</label>
+          {chartImage ? (
+            <div className="relative rounded-xl border border-slate-700 bg-slate-950 p-2 overflow-hidden max-h-48 flex items-center justify-center">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={chartImage}
+                alt="Trade chart screenshot"
+                className="rounded-lg object-contain max-h-44 w-auto mx-auto shadow-md"
+              />
+            </div>
+          ) : (
+            <div
+              tabIndex={0}
+              className="rounded-xl border border-dashed border-slate-700 hover:border-sky-500/60 bg-slate-900/40 hover:bg-slate-900/60 p-4 text-center cursor-pointer transition-all focus:outline-none focus:ring-1 focus:ring-sky-500"
+            >
+              <div className="flex flex-col items-center gap-1.5">
+                <UploadCloud className="w-5 h-5 text-slate-400" />
+                <p className="text-xs text-slate-300 font-medium">
+                  Click here & press <kbd className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 font-mono text-[10px]">Ctrl + V</kbd> to paste TradingView screenshot
+                </p>
+                <p className="text-[10px] text-slate-500">or click below to choose a file</p>
+                <label className="cursor-pointer text-xs text-sky-400 hover:underline font-semibold mt-1">
+                  {uploadingImage ? "Uploading..." : "Browse image file"}
                   <input
-                    type="number"
-                    step="any"
-                    value={entryPrice}
-                    onChange={(e) => setEntryPrice(e.target.value)}
-                    placeholder="1.0850"
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    disabled={uploadingImage}
                   />
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Exit Price</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={exitPrice}
-                    onChange={(e) => setExitPrice(e.target.value)}
-                    onBlur={handleAutoCalcPnl}
-                    placeholder="1.0920"
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Stop Loss</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={stopLoss}
-                    onChange={(e) => setStopLoss(e.target.value)}
-                    placeholder="1.0820"
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Take Profit</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={takeProfit}
-                    onChange={(e) => setTakeProfit(e.target.value)}
-                    placeholder="1.0950"
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                <div>
-                  <label className="text-slate-400 block mb-1">Lot Size / Qty</label>
-                  <input
-                    type="number"
-                    step="any"
-                    value={quantity}
-                    onChange={(e) => setQuantity(e.target.value)}
-                    placeholder="1.0"
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 font-mono text-white text-xs"
-                  />
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Timeframe</label>
-                  <select
-                    value={timeframe}
-                    onChange={(e) => setTimeframe(e.target.value)}
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-white text-xs"
-                  >
-                    <option value="1m">1m</option>
-                    <option value="5m">5m</option>
-                    <option value="15m">15m</option>
-                    <option value="1h">1h</option>
-                    <option value="4h">4h</option>
-                    <option value="1d">Daily</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-slate-400 block mb-1">Chart Screenshot URL</label>
-                  <input
-                    type="url"
-                    value={chartUrl}
-                    onChange={(e) => setChartUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full rounded-lg bg-slate-950 border border-slate-800 px-2.5 py-1.5 text-white text-xs"
-                  />
-                </div>
+                </label>
               </div>
             </div>
           )}

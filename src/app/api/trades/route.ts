@@ -23,11 +23,14 @@ const TradeSchema = z.object({
   session: z.string().optional().default(""),
   strategy: z.string().optional().default(""),
   signal_provider: z.string().optional().default("Self"),
+  exchange: z.string().optional().default("MANUAL"),
+  exchange_trade_id: z.string().optional().nullable(),
   reason_entry: z.string().optional().default(""),
   reason_outcome: z.string().optional().default(""),
   lessons_learned: z.string().optional().default(""),
   emotions_notes: z.string().optional().default(""),
   chart_url: z.string().optional().default(""),
+  chart_image: z.string().optional().default(""),
   tags: z.array(z.string()).optional().default([]),
 });
 
@@ -39,8 +42,9 @@ export async function GET(req: NextRequest) {
     const startDate = searchParams.get("startDate") || undefined;
     const endDate = searchParams.get("endDate") || undefined;
     const signal_provider = searchParams.get("signal_provider") || undefined;
+    const exchange = searchParams.get("exchange") || undefined;
 
-    const trades = await getTrades({ symbol, status, startDate, endDate, signal_provider });
+    const trades = await getTrades({ symbol, status, startDate, endDate, signal_provider, exchange });
     return NextResponse.json({ success: true, count: trades.length, trades });
   } catch (error: any) {
     console.error("[API trades GET] Error:", error);

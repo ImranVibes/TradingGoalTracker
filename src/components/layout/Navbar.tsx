@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { PlusCircle, ArrowDownLeft, Target, Calculator, RefreshCw, BarChart2 } from "lucide-react";
+import { PlusCircle, ArrowDownLeft, Target, Calculator, RefreshCw, BarChart2, Settings } from "lucide-react";
 import { Button } from "../ui/Button";
 
 interface NavbarProps {
@@ -49,6 +49,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Calculator className="w-3.5 h-3.5 text-sky-400" />
             Calculator
+          </Link>
+
+          <Link
+            href="/settings"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Settings & Exchange Keys"
+          >
+            <Settings className="w-3.5 h-3.5 text-slate-400 hover:text-white" />
           </Link>
 
           {onRefresh && (

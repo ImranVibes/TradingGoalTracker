@@ -22,6 +22,13 @@ import {
   ArrowRight,
   Calculator,
   Radio,
+  RefreshCw,
+  ShieldCheck,
+  ShieldAlert,
+  Activity,
+  Landmark,
+  Sliders,
+  CheckCircle2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -29,6 +36,8 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
   // Modals
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
@@ -58,6 +67,30 @@ export default function DashboardPage() {
     fetchData();
   }, [fetchData]);
 
+  const handleSyncExchanges = async () => {
+    setIsSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch("/api/exchanges/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncMessage(`Sync complete: ${data.imported_trades || 0} trades imported.`);
+        await fetchData();
+      } else {
+        setSyncMessage(data.error || "Exchange sync failed.");
+      }
+    } catch (err: any) {
+      setSyncMessage(err.message || "Failed to trigger sync.");
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setSyncMessage(null), 5000);
+    }
+  };
+
   const handleDeleteTrade = async (tradeId: string) => {
     try {
       await fetch(`/api/trades/${tradeId}`, { method: "DELETE" });
@@ -75,6 +108,12 @@ export default function DashboardPage() {
       console.error(err);
     }
   };
+
+  const maxDd = stats?.drawdown?.max_drawdown_percent ?? 0;
+  const currentDd = stats?.drawdown?.current_drawdown_percent ?? 0;
+  const livingBalance = stats?.living_balance ?? stats?.net_pnl ?? 0;
+  const startingBalance = stats?.starting_balance ?? 10000;
+  const peakEquity = stats?.drawdown?.peak_balance ?? livingBalance;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16]">
@@ -95,24 +134,34 @@ export default function DashboardPage() {
         <Sidebar />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
-          {/* Header */}
+          {/* Header & Quick Action */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
                 Trading Dashboard
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Overview of your P&L, win rate, goals, and recent executions.
+                Living balance, drawdown risk, exchange syncs, and signal provider analytics.
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center flex-wrap gap-2">
+              <button
+                onClick={handleSyncExchanges}
+                disabled={isSyncing}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                title="Auto-sync trades & balances from Binance and Bybit"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
+                {isSyncing ? "Syncing..." : "Sync Exchanges"}
+              </button>
+
               <Link
                 href="/calculator"
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors flex items-center gap-1.5"
               >
-                <Calculator className="w-3.5 h-3.5 text-sky-400" />
-                Risk Calculator
+                <Calculator className="w-3.5 h-3.5 text-emerald-400" />
+                Risk Calc
               </Link>
 
               <button
@@ -128,10 +177,118 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* 4 Stat Cards */}
+          {/* Sync Status Banner */}
+          {syncMessage && (
+            <div className="p-3 rounded-xl bg-slate-900/90 border border-sky-500/30 text-xs text-sky-300 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-sky-400" />
+                {syncMessage}
+              </span>
+              <button onClick={() => setSyncMessage(null)} className="text-slate-400 hover:text-white">
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Living Account Balance & Drawdown Risk Hero Card */}
+          <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 shadow-lg relative overflow-hidden">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              {/* Left Column: Living Balance */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-sky-400" />
+                    Living Account Balance
+                  </span>
+                  <Link
+                    href="/settings"
+                    className="text-[10px] text-slate-500 hover:text-sky-400 flex items-center gap-1 transition-colors"
+                    title="Configure starting balance & risk settings"
+                  >
+                    <Sliders className="w-3 h-3" /> Config
+                  </Link>
+                </div>
+
+                <div className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white num-tabular">
+                  {formatCurrency(livingBalance)}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400 font-mono">
+                  <span>
+                    Initial: <strong className="text-slate-200">{formatCurrency(startingBalance)}</strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Closed P&L:{" "}
+                    <strong className={(stats?.net_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}>
+                      {formatCurrency(stats?.net_pnl || 0, true)}
+                    </strong>
+                  </span>
+                  <span>•</span>
+                  <span>
+                    Peak Equity: <strong className="text-sky-300">{formatCurrency(peakEquity)}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Right Column: Drawdown & Risk Telemetry */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 min-w-[140px]">
+                  <div className="flex items-center justify-between text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    <span>Max Drawdown</span>
+                    {maxDd > 10 ? (
+                      <ShieldAlert className="w-3.5 h-3.5 text-rose-400" />
+                    ) : (
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                  </div>
+                  <div
+                    className={`text-xl sm:text-2xl font-black font-mono mt-1 ${
+                      maxDd > 10 ? "text-rose-400" : maxDd > 5 ? "text-amber-400" : "text-emerald-400"
+                    }`}
+                  >
+                    {maxDd.toFixed(2)}%
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                    -${formatCurrency(stats?.drawdown?.max_drawdown_amount || 0).replace("$", "")} from peak
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 min-w-[140px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    Current Drawdown
+                  </div>
+                  <div
+                    className={`text-xl sm:text-2xl font-black font-mono mt-1 ${
+                      currentDd > 5 ? "text-rose-400" : "text-slate-200"
+                    }`}
+                  >
+                    {currentDd.toFixed(2)}%
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                    {currentDd === 0 ? "At Peak High" : `-$${formatCurrency(stats?.drawdown?.current_drawdown_amount || 0).replace("$", "")}`}
+                  </div>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-slate-900 border border-slate-800 min-w-[140px]">
+                  <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                    Profit Factor
+                  </div>
+                  <div className="text-xl sm:text-2xl font-black font-mono mt-1 text-sky-400">
+                    {stats?.profit_factor || 0}
+                  </div>
+                  <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                    {stats?.won_trades || 0}W / {stats?.lost_trades || 0}L
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 4 Primary Stat Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard
-              label="Net P&L"
+              label="Net Closed P&L"
               value={formatCurrency(stats?.net_pnl || 0, true)}
               subValue={`+${formatCurrency(stats?.total_profit || 0)} / -${formatCurrency(stats?.total_loss || 0)}`}
               icon={<TrendingUp className="w-4 h-4" />}
@@ -141,7 +298,7 @@ export default function DashboardPage() {
             <StatCard
               label="Win Rate"
               value={`${stats?.win_rate || 0}%`}
-              subValue={`${stats?.won_trades || 0}W / ${stats?.lost_trades || 0}L • PF: ${stats?.profit_factor || 0}`}
+              subValue={`${stats?.won_trades || 0} Won / ${stats?.total_trades || 0} Total Trades`}
               icon={<Percent className="w-4 h-4" />}
               variant="brand"
             />
@@ -157,7 +314,7 @@ export default function DashboardPage() {
             <StatCard
               label="Total Spent"
               value={formatCurrency(stats?.total_spent || 0)}
-              subValue="Living & expenses"
+              subValue="Living & expenses logged"
               icon={<ShoppingBag className="w-4 h-4" />}
               variant="neutral"
             />
@@ -169,7 +326,7 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between mb-4">
                 <div>
                   <h3 className="text-sm font-bold text-white tracking-tight">Equity Curve</h3>
-                  <p className="text-xs text-slate-400">Cumulative net P&L over time</p>
+                  <p className="text-xs text-slate-400">Cumulative net P&L growth over time</p>
                 </div>
                 <Link
                   href="/analytics"
@@ -234,58 +391,110 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Signal Providers Attribution Banner */}
-          {stats?.provider_distribution && stats.provider_distribution.length > 0 && (
-            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20">
-                  <Radio className="w-5 h-5" />
+          {/* Exchanges Distribution & Signal Attribution Row */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Exchange Breakdown */}
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-4 flex flex-col justify-between space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    <Landmark className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Exchange Platforms</h4>
+                    <p className="text-[11px] text-slate-400">P&L by broker / exchange source</p>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
-                    Signal Attribution Breakdown
-                  </h4>
-                  <p className="text-xs text-slate-400">
-                    Comparing profits between your own trading setups and followed traders
-                  </p>
-                </div>
+
+                <Link
+                  href="/settings"
+                  className="text-xs text-sky-400 hover:underline flex items-center gap-1 font-medium"
+                >
+                  Manage Keys <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                {stats.provider_distribution.slice(0, 4).map((p) => {
-                  const isProfit = p.total_pnl > 0;
-                  const isLoss = p.total_pnl < 0;
-                  return (
+              {stats?.exchange_distribution && stats.exchange_distribution.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {stats.exchange_distribution.map((ex) => (
                     <div
-                      key={p.name}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2 text-xs"
+                      key={ex.exchange}
+                      className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs"
                     >
-                      <span className="font-semibold text-slate-300 flex items-center gap-1">
-                        {p.is_self ? "👤 Self" : `📡 ${p.name}`}
-                      </span>
-                      <span
-                        className={`font-mono font-bold ${
-                          isProfit ? "text-emerald-400" : isLoss ? "text-rose-400" : "text-slate-400"
+                      <div className="font-semibold text-slate-300 truncate uppercase tracking-wider text-[10px]">
+                        {ex.exchange}
+                      </div>
+                      <div
+                        className={`font-mono font-bold text-sm mt-0.5 ${
+                          ex.total_pnl >= 0 ? "text-emerald-400" : "text-rose-400"
                         }`}
                       >
-                        {formatCurrency(p.total_pnl, true)}
-                      </span>
-                      <span className="text-[10px] text-slate-400 font-mono">
-                        ({p.win_rate}%)
-                      </span>
+                        {formatCurrency(ex.total_pnl, true)}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        {ex.count} trades • {ex.win_rate}% win
+                      </div>
                     </div>
-                  );
-                })}
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                  No exchange data yet. Connect Binance or Bybit in Settings.
+                </div>
+              )}
+            </div>
+
+            {/* Signal Attribution Breakdown */}
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-4 flex flex-col justify-between space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                    <Radio className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Signal Attribution</h4>
+                    <p className="text-[11px] text-slate-400">Self vs followed trader performance</p>
+                  </div>
+                </div>
 
                 <Link
                   href="/signals"
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/30 transition-colors flex items-center gap-1"
+                  className="text-xs text-violet-300 hover:underline flex items-center gap-1 font-medium"
                 >
-                  Full Comparison <ArrowRight className="w-3.5 h-3.5" />
+                  Leaderboard <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
+
+              {stats?.provider_distribution && stats.provider_distribution.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {stats.provider_distribution.slice(0, 3).map((p) => (
+                    <div
+                      key={p.name}
+                      className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs"
+                    >
+                      <div className="font-semibold text-slate-300 truncate text-[10px]">
+                        {p.is_self ? "👤 Self" : `📡 ${p.name}`}
+                      </div>
+                      <div
+                        className={`font-mono font-bold text-sm mt-0.5 ${
+                          p.total_pnl >= 0 ? "text-emerald-400" : "text-rose-400"
+                        }`}
+                      >
+                        {formatCurrency(p.total_pnl, true)}
+                      </div>
+                      <div className="text-[10px] text-slate-400 font-mono">
+                        {p.count} trades • {p.win_rate}% win
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500">
+                  No signal providers logged yet.
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* Recent Trades Table */}
           <div className="space-y-3">

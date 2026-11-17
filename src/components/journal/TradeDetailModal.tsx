@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
@@ -16,6 +16,10 @@ import {
   HelpCircle,
   Radio,
   User,
+  Landmark,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
 } from "lucide-react";
 
 interface TradeDetailModalProps {
@@ -33,11 +37,22 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onEdit,
   onDelete,
 }) => {
+  const [isImageZoomed, setIsImageZoomed] = useState(false);
+
   if (!trade) return null;
 
   const rrRatio = calculateRR(trade.entry_price || 0, trade.stop_loss, trade.take_profit, trade.direction);
   const isProfit = trade.pnl > 0;
   const isLoss = trade.pnl < 0;
+
+  const getExchangeBadge = (exchange?: string) => {
+    const ex = exchange?.toUpperCase();
+    if (ex === "BINANCE") return "bg-amber-500/15 text-amber-300 border-amber-500/30";
+    if (ex === "BYBIT") return "bg-orange-500/15 text-orange-300 border-orange-500/30";
+    if (ex === "OKX") return "bg-blue-500/15 text-blue-300 border-blue-500/30";
+    if (ex === "METATRADER" || ex === "MT4/MT5") return "bg-indigo-500/15 text-indigo-300 border-indigo-500/30";
+    return "bg-slate-800 text-slate-300 border-slate-700";
+  };
 
   return (
     <Modal
@@ -84,21 +99,34 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-col items-end gap-1">
-            <Badge
-              variant={
-                trade.status === "WON"
-                  ? "profit"
-                  : trade.status === "LOST"
-                  ? "loss"
-                  : trade.status === "BREAKEVEN"
-                  ? "breakeven"
-                  : "open"
-              }
-              size="sm"
-            >
-              {trade.status}
-            </Badge>
+          <div className="flex flex-col items-end gap-1.5">
+            <div className="flex items-center gap-1.5">
+              <Badge
+                variant={
+                  trade.status === "WON"
+                    ? "profit"
+                    : trade.status === "LOST"
+                    ? "loss"
+                    : trade.status === "BREAKEVEN"
+                    ? "breakeven"
+                    : "open"
+                }
+                size="sm"
+              >
+                {trade.status}
+              </Badge>
+
+              {trade.exchange && (
+                <span
+                  className={`text-[10px] px-2 py-0.5 rounded border font-semibold uppercase tracking-wider ${getExchangeBadge(
+                    trade.exchange
+                  )}`}
+                >
+                  {trade.exchange}
+                </span>
+              )}
+            </div>
+
             {rrRatio && (
               <span className="text-[10px] font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
                 1:{rrRatio} R:R
@@ -108,7 +136,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         </div>
 
         {/* Pricing, Strategy & Signal Source Details */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 text-xs">
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Exchange</span>
+            <span className="font-semibold text-white truncate block mt-0.5 flex items-center gap-1">
+              <Landmark className="w-3 h-3 text-amber-400 flex-shrink-0" />
+              <span className="truncate">{trade.exchange || "Manual"}</span>
+            </span>
+          </div>
           <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Signal Source</span>
             <span className="font-semibold text-white truncate block mt-0.5 flex items-center gap-1">
@@ -139,11 +174,19 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <span className="text-slate-400 block text-[10px] uppercase">Exit Price</span>
             <span className="font-mono text-white block mt-0.5">{trade.exit_price || "-"}</span>
           </div>
-          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 col-span-2 sm:col-span-1">
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Lot Size</span>
             <span className="font-mono text-white block mt-0.5">{trade.quantity || 1}</span>
           </div>
         </div>
+
+        {trade.exchange_trade_id && (
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-400 font-mono">
+            <RefreshCw className="w-3 h-3 text-sky-400 flex-shrink-0" />
+            <span>Auto-synced trade ID:</span>
+            <span className="text-slate-200 select-all">{trade.exchange_trade_id}</span>
+          </div>
+        )}
 
         {/* Reason: Why I took the trade */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
@@ -167,6 +210,55 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </p>
         </div>
 
+        {/* Attached Chart Image Preview */}
+        {trade.chart_image && (
+          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-white flex items-center gap-1.5">
+                Chart Setup / Autopsy Screenshot
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsImageZoomed(!isImageZoomed)}
+                  className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 font-medium"
+                >
+                  {isImageZoomed ? (
+                    <>
+                      <Minimize2 className="w-3.5 h-3.5" /> Normal View
+                    </>
+                  ) : (
+                    <>
+                      <Maximize2 className="w-3.5 h-3.5" /> Expand
+                    </>
+                  )}
+                </button>
+                <a
+                  href={trade.chart_image}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-slate-400 hover:text-white flex items-center gap-1"
+                >
+                  <ExternalLink className="w-3 h-3" /> Full Res
+                </a>
+              </div>
+            </div>
+
+            <div
+              className={`overflow-hidden rounded-lg border border-slate-800 bg-black/40 flex items-center justify-center cursor-pointer transition-all ${
+                isImageZoomed ? "max-h-[600px]" : "max-h-64"
+              }`}
+              onClick={() => setIsImageZoomed(!isImageZoomed)}
+            >
+              <img
+                src={trade.chart_image}
+                alt="Trade Chart Setup"
+                className="w-full h-auto object-contain max-h-inherit"
+              />
+            </div>
+          </div>
+        )}
+
         {trade.chart_url && (
           <div>
             <a
@@ -175,7 +267,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               rel="noreferrer"
               className="inline-flex items-center gap-1 text-xs text-sky-400 hover:underline"
             >
-              <ExternalLink className="w-3.5 h-3.5" /> View Chart Link
+              <ExternalLink className="w-3.5 h-3.5" /> View External Chart Link
             </a>
           </div>
         )}
