@@ -9,12 +9,9 @@ const LOCAL_STORE_FILE = path.join(DATA_DIR, "tracker_store.json");
 if (!fs.existsSync(DATA_DIR)) {
   try {
     fs.mkdirSync(DATA_DIR, { recursive: true });
-  } catch (err) {
-    // Ignore if already exists
-  }
+  } catch (err) {}
 }
 
-// Extract database configuration
 const DB_URL =
   process.env.DATABASE_URL ||
   process.env.INTERNAL_DATABASE_URL ||
@@ -35,7 +32,6 @@ function getPool(): Pool {
   return pool;
 }
 
-// In-Memory / File-based store interface for local offline / Docker isolation fallback
 interface LocalStore {
   trades: Trade[];
   cashflows: Cashflow[];
@@ -50,7 +46,7 @@ function loadLocalStore(): LocalStore {
       const content = fs.readFileSync(LOCAL_STORE_FILE, "utf-8");
       return JSON.parse(content);
     } catch (e) {
-      console.error("[LocalStore] Error reading local store, initializing empty:", e);
+      console.error("[LocalStore] Error reading local store:", e);
     }
   }
 
@@ -62,8 +58,8 @@ function loadLocalStore(): LocalStore {
     settings: {
       account_balance: 10000,
       currency: "USD",
-      daily_loss_limit: 500,
-      daily_profit_target: 1000,
+      risk_percentage: 1.0,
+      default_leverage: 100,
     },
   };
   saveLocalStore(initialStore);
@@ -78,7 +74,6 @@ function saveLocalStore(store: LocalStore) {
   }
 }
 
-// Run PostgreSQL Table Migrations
 async function initPostgresTables(client: any) {
   await client.query(`
     CREATE TABLE IF NOT EXISTS tracker_trades (
@@ -86,21 +81,21 @@ async function initPostgresTables(client: any) {
       symbol VARCHAR(32) NOT NULL,
       market VARCHAR(32) NOT NULL DEFAULT 'FOREX',
       direction VARCHAR(16) NOT NULL DEFAULT 'LONG',
-      entry_price DOUBLE PRECISION NOT NULL,
-      exit_price DOUBLE PRECISION,
-      stop_loss DOUBLE PRECISION,
-      take_profit DOUBLE PRECISION,
-      quantity DOUBLE PRECISION NOT NULL DEFAULT 1,
+      entry_price DOUBLE PRECISION DEFAULT NULL,
+      exit_price DOUBLE PRECISION DEFAULT NULL,
+      stop_loss DOUBLE PRECISION DEFAULT NULL,
+      take_profit DOUBLE PRECISION DEFAULT NULL,
+      quantity DOUBLE PRECISION DEFAULT 1,
       pnl DOUBLE PRECISION NOT NULL DEFAULT 0,
       pnl_percentage DOUBLE PRECISION DEFAULT 0,
       status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
       trade_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       closed_date TIMESTAMPTZ,
       timeframe VARCHAR(16) DEFAULT '1h',
-      session VARCHAR(32) DEFAULT 'New York',
-      strategy VARCHAR(64) DEFAULT 'SMC Fortress',
-      reason_entry TEXT NOT NULL DEFAULT '',
-      reason_outcome TEXT NOT NULL DEFAULT '',
+      session VARCHAR(32) DEFAULT '',
+      strategy VARCHAR(64) DEFAULT '',
+      reason_entry TEXT DEFAULT '',
+      reason_outcome TEXT DEFAULT '',
       lessons_learned TEXT DEFAULT '',
       emotions_notes TEXT DEFAULT '',
       chart_url TEXT DEFAULT '',
@@ -114,7 +109,7 @@ async function initPostgresTables(client: any) {
       type VARCHAR(20) NOT NULL,
       amount DOUBLE PRECISION NOT NULL,
       category VARCHAR(64) NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
+      description TEXT DEFAULT '',
       date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       source VARCHAR(64) DEFAULT 'Trading Account',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -176,9 +171,6 @@ export async function checkConnection(): Promise<{ isPostgres: boolean; message:
   } catch (err: any) {
     isPostgresAvailable = false;
     hasCheckedPostgres = true;
-    console.warn(
-      `[DB Engine] PostgreSQL unreachable (${err?.message}). Operating in resilient local storage mode (PG active when deployed to Coolify container).`
-    );
     return {
       isPostgres: false,
       message: "Operating in resilient local storage mode (PG active when deployed to Coolify)",
@@ -289,20 +281,20 @@ export async function createTrade(trade: Trade): Promise<Trade> {
         trade.id,
         trade.symbol.toUpperCase(),
         trade.market || "FOREX",
-        trade.direction,
-        trade.entry_price,
+        trade.direction || "LONG",
+        trade.entry_price ?? null,
         trade.exit_price ?? null,
         trade.stop_loss ?? null,
         trade.take_profit ?? null,
-        trade.quantity || 1,
+        trade.quantity ?? 1,
         trade.pnl || 0,
         trade.pnl_percentage ?? 0,
         trade.status || "OPEN",
         trade.trade_date,
         trade.closed_date ?? null,
         trade.timeframe || "1h",
-        trade.session || "New York",
-        trade.strategy || "SMC Fortress",
+        trade.session || "",
+        trade.strategy || "",
         trade.reason_entry || "",
         trade.reason_outcome || "",
         trade.lessons_learned || "",
@@ -319,7 +311,6 @@ export async function createTrade(trade: Trade): Promise<Trade> {
     saveLocalStore(store);
   }
 
-  // Update Daily Summary and Goals
   const dateKey = trade.trade_date.split("T")[0];
   await syncDailySummary(dateKey);
   await syncGoals();
@@ -351,26 +342,26 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
       WHERE id = $24`,
       [
         updated.symbol.toUpperCase(),
-        updated.market,
-        updated.direction,
-        updated.entry_price,
+        updated.market || "FOREX",
+        updated.direction || "LONG",
+        updated.entry_price ?? null,
         updated.exit_price ?? null,
         updated.stop_loss ?? null,
         updated.take_profit ?? null,
-        updated.quantity,
+        updated.quantity ?? 1,
         updated.pnl,
         updated.pnl_percentage ?? null,
         updated.status,
         updated.trade_date,
         updated.closed_date ?? null,
-        updated.timeframe,
-        updated.session,
-        updated.strategy,
-        updated.reason_entry,
-        updated.reason_outcome,
-        updated.lessons_learned,
-        updated.emotions_notes,
-        updated.chart_url,
+        updated.timeframe || "",
+        updated.session || "",
+        updated.strategy || "",
+        updated.reason_entry || "",
+        updated.reason_outcome || "",
+        updated.lessons_learned || "",
+        updated.emotions_notes || "",
+        updated.chart_url || "",
         JSON.stringify(updated.tags || []),
         updated.updated_at,
         id,
@@ -415,7 +406,7 @@ export async function deleteTrade(id: string): Promise<boolean> {
 }
 
 // -----------------------------------------------------------------------------
-// CASHFLOW API (Withdrawals & Spending)
+// CASHFLOW API
 // -----------------------------------------------------------------------------
 export async function getCashflows(filters?: { type?: string; startDate?: string; endDate?: string }): Promise<Cashflow[]> {
   const { isPostgres } = await checkConnection();
@@ -648,7 +639,6 @@ export async function deleteGoal(id: string): Promise<boolean> {
 // DAILY SUMMARIES & STATS COMPUTATION
 // -----------------------------------------------------------------------------
 export async function syncDailySummary(dateKey: string): Promise<void> {
-  // Aggregate all trades for that date
   const startDate = `${dateKey}T00:00:00.000Z`;
   const endDate = `${dateKey}T23:59:59.999Z`;
 
@@ -756,7 +746,6 @@ export async function getDailySummaries(month?: string): Promise<Record<string, 
   return result;
 }
 
-// Automatically sync progress for auto-calculated goals
 export async function syncGoals(): Promise<void> {
   const trades = await getTrades();
   const cashflows = await getCashflows();
@@ -844,7 +833,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 
   const net_cash_extracted = total_withdrawn - total_deposits;
 
-  // Build equity curve ordered chronologically
   const sortedDates = Object.keys(dailyPnlMap).sort();
   let cumulative = 0;
   const equity_curve = sortedDates.map((date) => {
@@ -856,7 +844,6 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     };
   });
 
-  // Pair distribution
   const pair_distribution = Object.entries(pairStats)
     .map(([symbol, data]) => ({
       symbol,

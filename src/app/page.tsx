@@ -11,17 +11,16 @@ import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { GoalCard } from "@/components/goals/GoalCard";
-import { Trade, Cashflow, Goal, DashboardStats } from "@/lib/types";
+import { Trade, Goal, DashboardStats } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import {
   TrendingUp,
   Percent,
   Wallet,
   ShoppingBag,
-  Target,
   PlusCircle,
   ArrowRight,
-  ShieldAlert,
+  Calculator,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -29,9 +28,8 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [loading, setLoading] = useState(true);
 
-  // Modals state
+  // Modals
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
@@ -51,9 +49,7 @@ export default function DashboardPage() {
       if (tradesRes.success) setTrades(tradesRes.trades);
       if (goalsRes.success) setGoals(goalsRes.goals);
     } catch (err) {
-      console.error("Failed to load dashboard data:", err);
-    } finally {
-      setLoading(false);
+      console.error(err);
     }
   }, []);
 
@@ -66,7 +62,7 @@ export default function DashboardPage() {
       await fetch(`/api/trades/${tradeId}`, { method: "DELETE" });
       await fetchData();
     } catch (err) {
-      console.error("Error deleting trade:", err);
+      console.error(err);
     }
   };
 
@@ -75,7 +71,7 @@ export default function DashboardPage() {
       await fetch(`/api/goals/${goalId}`, { method: "DELETE" });
       await fetchData();
     } catch (err) {
-      console.error("Error deleting goal:", err);
+      console.error(err);
     }
   };
 
@@ -98,116 +94,115 @@ export default function DashboardPage() {
         <Sidebar />
 
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
-          {/* Header Banner */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
-                Trading & Life Goal Command Center
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                Trading Dashboard
               </h1>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                Real-time tracking of currency pairs, profit/loss execution reflections, withdrawals, and financial targets.
+              <p className="text-xs text-slate-400 mt-0.5">
+                Overview of your P&L, win rate, goals, and recent executions.
               </p>
             </div>
 
             <div className="flex items-center gap-2">
+              <Link
+                href="/calculator"
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors flex items-center gap-1.5"
+              >
+                <Calculator className="w-3.5 h-3.5 text-sky-400" />
+                Risk Calculator
+              </Link>
+
               <button
                 onClick={() => {
                   setEditTrade(null);
                   setIsTradeModalOpen(true);
                 }}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 transition-all flex items-center gap-1.5"
+                className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all flex items-center gap-1.5"
               >
-                <PlusCircle className="w-4 h-4" />
+                <PlusCircle className="w-3.5 h-3.5" />
                 Log Trade
               </button>
             </div>
           </div>
 
-          {/* 4 Core Stat Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* 4 Stat Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard
-              label="Net Trading PnL"
+              label="Net P&L"
               value={formatCurrency(stats?.net_pnl || 0, true)}
               subValue={`+${formatCurrency(stats?.total_profit || 0)} / -${formatCurrency(stats?.total_loss || 0)}`}
-              icon={<TrendingUp className="w-5 h-5" />}
+              icon={<TrendingUp className="w-4 h-4" />}
               variant={(stats?.net_pnl || 0) >= 0 ? "profit" : "loss"}
             />
 
             <StatCard
-              label="Win Rate & Profit Factor"
+              label="Win Rate"
               value={`${stats?.win_rate || 0}%`}
               subValue={`${stats?.won_trades || 0}W / ${stats?.lost_trades || 0}L • PF: ${stats?.profit_factor || 0}`}
-              icon={<Percent className="w-5 h-5" />}
+              icon={<Percent className="w-4 h-4" />}
               variant="brand"
             />
 
             <StatCard
-              label="Total Withdrawn (Bank/Crypto)"
+              label="Total Withdrawn"
               value={formatCurrency(stats?.total_withdrawn || 0)}
               subValue={`Net Extracted: ${formatCurrency(stats?.net_cash_extracted || 0)}`}
-              icon={<Wallet className="w-5 h-5" />}
+              icon={<Wallet className="w-4 h-4" />}
               variant="amber"
             />
 
             <StatCard
-              label="Total Spent & Expenses"
+              label="Total Spent"
               value={formatCurrency(stats?.total_spent || 0)}
-              subValue="Life, gear, tools & bills"
-              icon={<ShoppingBag className="w-5 h-5" />}
+              subValue="Living & expenses"
+              icon={<ShoppingBag className="w-4 h-4" />}
               variant="neutral"
             />
           </div>
 
-          {/* Equity Curve & Goal Highlights Section */}
+          {/* Equity Curve & Active Goals */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Equity Curve Chart (2 cols) */}
-            <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-[#0f172a] p-5 shadow-xl flex flex-col justify-between">
+            <div className="lg:col-span-2 rounded-2xl border border-slate-800 bg-[#0f172a] p-5 shadow-lg flex flex-col justify-between">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-base font-bold text-white tracking-tight">
-                    Cumulative Equity Curve
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Track your equity growth and trade performance trajectory
-                  </p>
+                  <h3 className="text-sm font-bold text-white tracking-tight">Equity Curve</h3>
+                  <p className="text-xs text-slate-400">Cumulative net P&L over time</p>
                 </div>
                 <Link
                   href="/analytics"
-                  className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold"
+                  className="text-xs text-sky-400 hover:underline flex items-center gap-1 font-medium"
                 >
-                  Full Analytics <ArrowRight className="w-3.5 h-3.5" />
+                  Analytics <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
 
               <EquityChart data={stats?.equity_curve || []} />
             </div>
 
-            {/* Target Goals Card (1 col) */}
-            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 shadow-xl flex flex-col justify-between">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <Target className="w-4 h-4 text-sky-400" />
-                  <h3 className="text-base font-bold text-white tracking-tight">Active Goals</h3>
-                </div>
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 shadow-lg flex flex-col justify-between">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-bold text-white tracking-tight">Active Goals</h3>
                 <Link
                   href="/goals"
-                  className="text-xs text-sky-400 hover:text-sky-300 flex items-center gap-1 font-semibold"
+                  className="text-xs text-sky-400 hover:underline flex items-center gap-1 font-medium"
                 >
-                  Manage <ArrowRight className="w-3.5 h-3.5" />
+                  View All <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </div>
 
               {goals.length === 0 ? (
                 <div className="p-6 text-center border border-dashed border-slate-800 rounded-xl my-auto">
-                  <p className="text-xs text-slate-400">No active goals set yet.</p>
+                  <p className="text-xs text-slate-400">No active goals set.</p>
                   <button
                     onClick={() => {
                       setEditGoal(null);
                       setIsGoalModalOpen(true);
                     }}
-                    className="mt-3 text-xs font-bold text-sky-400 hover:underline"
+                    className="mt-2 text-xs font-bold text-sky-400 hover:underline"
                   >
-                    + Set Your First Milestone
+                    + Set a Target
                   </button>
                 </div>
               ) : (
@@ -231,9 +226,9 @@ export default function DashboardPage() {
                   setEditGoal(null);
                   setIsGoalModalOpen(true);
                 }}
-                className="mt-4 w-full py-2 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
+                className="mt-3 w-full py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors"
               >
-                + Add Another Goal
+                + Add Goal
               </button>
             </div>
           </div>
@@ -241,19 +236,12 @@ export default function DashboardPage() {
           {/* Recent Trades Table */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-base font-bold text-white tracking-tight">
-                  Recent Journal Executions
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Click on any trade row to read complete reasoning, setup checklist, and post-trade autopsy
-                </p>
-              </div>
+              <h3 className="text-sm font-bold text-white tracking-tight">Recent Trades</h3>
               <Link
                 href="/journal"
-                className="text-xs font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1"
+                className="text-xs font-medium text-sky-400 hover:underline flex items-center gap-1"
               >
-                View Full Journal ({trades.length}) <ArrowRight className="w-3.5 h-3.5" />
+                Full Journal ({trades.length}) <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
@@ -269,7 +257,6 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* Global Modals */}
       <TradeFormModal
         isOpen={isTradeModalOpen}
         onClose={() => setIsTradeModalOpen(false)}

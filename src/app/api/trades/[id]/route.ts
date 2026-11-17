@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getTradeById, updateTrade, deleteTrade } from "@/lib/db";
 import { z } from "zod";
 
+export const dynamic = "force-dynamic";
+
 const TradeUpdateSchema = z.object({
   symbol: z.string().max(32).optional(),
   market: z.enum(["FOREX", "CRYPTO", "COMMODITY", "INDEX", "STOCKS"]).optional(),
   direction: z.enum(["LONG", "SHORT"]).optional(),
-  entry_price: z.coerce.number().positive().optional(),
+  entry_price: z.coerce.number().optional().nullable(),
   exit_price: z.coerce.number().optional().nullable(),
   stop_loss: z.coerce.number().optional().nullable(),
   take_profit: z.coerce.number().optional().nullable(),

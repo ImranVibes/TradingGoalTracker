@@ -5,13 +5,13 @@ export type MarketType = "FOREX" | "CRYPTO" | "COMMODITY" | "INDEX" | "STOCKS";
 export interface Trade {
   id: string;
   symbol: string;
-  market: MarketType;
-  direction: TradeDirection;
-  entry_price: number;
+  market?: MarketType;
+  direction?: TradeDirection;
+  entry_price?: number | null;
   exit_price?: number | null;
   stop_loss?: number | null;
   take_profit?: number | null;
-  quantity: number;
+  quantity?: number;
   pnl: number;
   pnl_percentage?: number | null;
   status: TradeStatus;
@@ -20,8 +20,8 @@ export interface Trade {
   timeframe?: string;
   session?: string;
   strategy?: string;
-  reason_entry: string;
-  reason_outcome: string;
+  reason_entry?: string;
+  reason_outcome?: string;
   lessons_learned?: string;
   emotions_notes?: string;
   chart_url?: string;
@@ -37,7 +37,7 @@ export interface Cashflow {
   type: CashflowType;
   amount: number;
   category: string;
-  description: string;
+  description?: string;
   date: string;
   source?: string;
   created_at: string;

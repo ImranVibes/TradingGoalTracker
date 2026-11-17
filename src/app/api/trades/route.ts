@@ -6,24 +6,24 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 const TradeSchema = z.object({
-  symbol: z.string().min(1, "Symbol is required").max(32),
+  symbol: z.string().min(1, "Symbol/Currency is required").max(32),
   market: z.enum(["FOREX", "CRYPTO", "COMMODITY", "INDEX", "STOCKS"]).default("FOREX"),
-  direction: z.enum(["LONG", "SHORT"]),
-  entry_price: z.coerce.number().positive("Entry price must be positive"),
+  direction: z.enum(["LONG", "SHORT"]).default("LONG"),
+  entry_price: z.coerce.number().optional().nullable(),
   exit_price: z.coerce.number().optional().nullable(),
   stop_loss: z.coerce.number().optional().nullable(),
   take_profit: z.coerce.number().optional().nullable(),
-  quantity: z.coerce.number().default(1),
+  quantity: z.coerce.number().optional().default(1),
   pnl: z.coerce.number().default(0),
   pnl_percentage: z.coerce.number().optional().nullable(),
   status: z.enum(["WON", "LOST", "BREAKEVEN", "OPEN"]).default("OPEN"),
   trade_date: z.string().default(() => new Date().toISOString()),
   closed_date: z.string().optional().nullable(),
   timeframe: z.string().optional().default("1h"),
-  session: z.string().optional().default("New York"),
-  strategy: z.string().optional().default("SMC Fortress"),
-  reason_entry: z.string().min(1, "Reason for taking trade is required"),
-  reason_outcome: z.string().default(""),
+  session: z.string().optional().default(""),
+  strategy: z.string().optional().default(""),
+  reason_entry: z.string().optional().default(""),
+  reason_outcome: z.string().optional().default(""),
   lessons_learned: z.string().optional().default(""),
   emotions_notes: z.string().optional().default(""),
   chart_url: z.string().optional().default(""),
@@ -57,13 +57,13 @@ export async function POST(req: NextRequest) {
     let pnl = validated.pnl;
     let status = validated.status;
 
-    if (validated.exit_price && (!pnl || pnl === 0)) {
+    if (validated.entry_price && validated.exit_price && (!pnl || pnl === 0)) {
       const diff =
         validated.direction === "LONG"
           ? validated.exit_price - validated.entry_price
           : validated.entry_price - validated.exit_price;
 
-      pnl = Number((diff * validated.quantity).toFixed(2));
+      pnl = Number((diff * (validated.quantity || 1)).toFixed(2));
       if (pnl > 0) status = "WON";
       else if (pnl < 0) status = "LOST";
       else status = "BREAKEVEN";

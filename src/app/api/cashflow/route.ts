@@ -9,7 +9,7 @@ const CashflowSchema = z.object({
   type: z.enum(["WITHDRAWAL", "EXPENSE", "DEPOSIT"]),
   amount: z.coerce.number().positive("Amount must be greater than zero"),
   category: z.string().min(1, "Category is required").max(64),
-  description: z.string().default(""),
+  description: z.string().optional().default(""),
   date: z.string().default(() => new Date().toISOString()),
   source: z.string().optional().default("Trading Account"),
 });

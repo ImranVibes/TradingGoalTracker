@@ -13,9 +13,7 @@ import {
   Edit2,
   Trash2,
   CheckCircle2,
-  AlertCircle,
-  Clock,
-  Compass,
+  HelpCircle,
 } from "lucide-react";
 
 interface TradeDetailModalProps {
@@ -35,7 +33,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
 }) => {
   if (!trade) return null;
 
-  const rrRatio = calculateRR(trade.entry_price, trade.stop_loss, trade.take_profit, trade.direction);
+  const rrRatio = calculateRR(trade.entry_price || 0, trade.stop_loss, trade.take_profit, trade.direction);
   const isProfit = trade.pnl > 0;
   const isLoss = trade.pnl < 0;
 
@@ -43,14 +41,14 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`${trade.symbol} (${trade.direction})`}
-      subtitle={`Logged on ${formatDate(trade.trade_date, true)}`}
-      maxWidth="2xl"
+      title={`${trade.symbol} • ${trade.direction || "LONG"}`}
+      subtitle={formatDate(trade.trade_date, true)}
+      maxWidth="xl"
     >
-      <div className="space-y-6">
-        {/* Main PnL Banner */}
+      <div className="space-y-5">
+        {/* PnL Banner */}
         <div
-          className={`flex items-center justify-between p-4 rounded-2xl border ${
+          className={`flex items-center justify-between p-4 rounded-xl border ${
             isProfit
               ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
               : isLoss
@@ -60,7 +58,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
         >
           <div className="flex items-center gap-3">
             <div
-              className={`p-2.5 rounded-xl ${
+              className={`p-2 rounded-lg ${
                 isProfit
                   ? "bg-emerald-500/20 text-emerald-300"
                   : isLoss
@@ -69,22 +67,22 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
               }`}
             >
               {trade.direction === "LONG" ? (
-                <TrendingUp className="w-6 h-6" />
+                <TrendingUp className="w-5 h-5" />
               ) : (
-                <TrendingDown className="w-6 h-6" />
+                <TrendingDown className="w-5 h-5" />
               )}
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wider text-slate-400 font-semibold">
-                Realized Outcome
+              <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                Outcome
               </div>
-              <div className="text-2xl font-black font-mono tracking-tight num-tabular">
+              <div className="text-xl font-black font-mono tracking-tight num-tabular">
                 {formatCurrency(trade.pnl, true)}
               </div>
             </div>
           </div>
 
-          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex flex-col items-end gap-1">
             <Badge
               variant={
                 trade.status === "WON"
@@ -95,133 +93,88 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                   ? "breakeven"
                   : "open"
               }
-              size="md"
+              size="sm"
             >
               {trade.status}
             </Badge>
             {rrRatio && (
-              <span className="text-xs font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
-                Risk/Reward: 1:{rrRatio}
+              <span className="text-[10px] font-mono text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
+                1:{rrRatio} R:R
               </span>
             )}
           </div>
         </div>
 
-        {/* Pricing Metrics Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="text-[11px] text-slate-400 uppercase tracking-wider">Entry Price</div>
-            <div className="text-sm font-mono font-bold text-white mt-0.5">
-              {trade.entry_price}
-            </div>
+        {/* Pricing & Strategy Details */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Strategy</span>
+            <span className="font-semibold text-white truncate block mt-0.5">
+              {trade.strategy || "Manual"}
+            </span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="text-[11px] text-slate-400 uppercase tracking-wider">Exit Price</div>
-            <div className="text-sm font-mono font-bold text-white mt-0.5">
-              {trade.exit_price ?? "Running / None"}
-            </div>
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Entry Price</span>
+            <span className="font-mono text-white block mt-0.5">{trade.entry_price || "-"}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="text-[11px] text-slate-400 uppercase tracking-wider">Stop Loss</div>
-            <div className="text-sm font-mono font-bold text-rose-400 mt-0.5">
-              {trade.stop_loss ?? "-"}
-            </div>
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Exit Price</span>
+            <span className="font-mono text-white block mt-0.5">{trade.exit_price || "-"}</span>
           </div>
-          <div className="p-3 rounded-xl bg-slate-900 border border-slate-800">
-            <div className="text-[11px] text-slate-400 uppercase tracking-wider">Take Profit</div>
-            <div className="text-sm font-mono font-bold text-emerald-400 mt-0.5">
-              {trade.take_profit ?? "-"}
-            </div>
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Lot Size</span>
+            <span className="font-mono text-white block mt-0.5">{trade.quantity || 1}</span>
           </div>
         </div>
 
-        {/* Setup & Session Details */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            <Compass className="w-3.5 h-3.5 text-sky-400" />
-            <span className="text-slate-400">Strategy:</span>
-            <span className="font-semibold text-white">{trade.strategy || "SMC"}</span>
+        {/* Reason: Why I took the trade */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-sky-400">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Why I took the trade
           </div>
-
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            <Clock className="w-3.5 h-3.5 text-indigo-400" />
-            <span className="text-slate-400">Session:</span>
-            <span className="font-semibold text-white">{trade.session || "NY"}</span>
-          </div>
-
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            <span className="text-slate-400">Timeframe:</span>
-            <span className="font-mono font-semibold text-white">{trade.timeframe || "1h"}</span>
-          </div>
-
-          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-300">
-            <span className="text-slate-400">Lot/Qty:</span>
-            <span className="font-mono font-semibold text-white">{trade.quantity}</span>
-          </div>
-        </div>
-
-        {/* CORE REQUIREMENT: WHY I TOOK THE TRADE */}
-        <div className="rounded-2xl border border-sky-500/20 bg-sky-950/10 p-4">
-          <div className="flex items-center gap-2 text-sky-400 text-xs font-bold uppercase tracking-wider mb-2">
-            <CheckCircle2 className="w-4 h-4" />
-            Why I took this trade (Setup Confluence & Entry Checklist)
-          </div>
-          <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
-            {trade.reason_entry || "No entry notes provided."}
+          <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+            {trade.reason_entry || "No entry reasoning recorded."}
           </p>
         </div>
 
-        {/* CORE REQUIREMENT: WHY PROFIT OR LOSS WAS MADE */}
-        <div className="rounded-2xl border border-emerald-500/20 bg-emerald-950/10 p-4">
-          <div className="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-wider mb-2">
-            <AlertCircle className="w-4 h-4" />
-            Why profit / loss was made (Post-Trade Execution Review)
+        {/* Reason: Why profit or loss happened */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
+            <HelpCircle className="w-3.5 h-3.5" />
+            Why profit / loss was made
           </div>
-          <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
-            {trade.reason_outcome || "No outcome reflection provided."}
+          <p className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">
+            {trade.reason_outcome || "No outcome notes recorded."}
           </p>
         </div>
 
-        {/* Lessons Learned */}
-        {trade.lessons_learned && (
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5">
-            <div className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-1">
-              Key Lesson Learned
-            </div>
-            <p className="text-xs text-slate-300">{trade.lessons_learned}</p>
-          </div>
-        )}
-
-        {/* Chart Screenshot Link */}
         {trade.chart_url && (
           <div>
             <a
               href={trade.chart_url}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-2 text-xs font-medium text-sky-400 hover:text-sky-300 hover:underline"
+              className="inline-flex items-center gap-1 text-xs text-sky-400 hover:underline"
             >
-              <ExternalLink className="w-3.5 h-3.5" /> View Chart / Screenshot
+              <ExternalLink className="w-3.5 h-3.5" /> View Chart Link
             </a>
           </div>
         )}
 
-        {/* Actions Bar */}
-        <div className="flex items-center justify-between pt-4 border-t border-slate-800">
-          <Button
-            variant="ghost"
-            size="sm"
-            icon={<Trash2 className="w-4 h-4 text-rose-400" />}
+        {/* Actions */}
+        <div className="flex items-center justify-between pt-3 border-t border-slate-800 text-xs">
+          <button
             onClick={() => {
-              if (confirm("Are you sure you want to delete this trade?")) {
+              if (confirm("Delete this trade?")) {
                 onDelete(trade.id);
                 onClose();
               }
             }}
-            className="text-rose-400 hover:bg-rose-500/10"
+            className="flex items-center gap-1 text-rose-400 hover:underline"
           >
-            Delete
-          </Button>
+            <Trash2 className="w-3.5 h-3.5" /> Delete
+          </button>
 
           <div className="flex items-center gap-2">
             <Button
@@ -233,7 +186,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
                 onEdit(trade);
               }}
             >
-              Edit Trade
+              Edit
             </Button>
             <Button variant="secondary" size="sm" onClick={onClose}>
               Close
