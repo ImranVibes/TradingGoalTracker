@@ -153,9 +153,11 @@ export default function SettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           exchange,
+          name: label.trim() || `${exchange.toUpperCase()} Main`,
           label: label.trim() || `${exchange.toUpperCase()} Main`,
           api_key: apiKey.trim(),
           api_secret: apiSecret.trim(),
+          account_type: category.toUpperCase() === "SPOT" ? "SPOT" : "FUTURES",
           category,
         }),
       });
