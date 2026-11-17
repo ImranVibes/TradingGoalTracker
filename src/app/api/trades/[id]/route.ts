@@ -21,6 +21,7 @@ const TradeUpdateSchema = z.object({
   timeframe: z.string().optional(),
   session: z.string().optional(),
   strategy: z.string().optional(),
+  signal_provider: z.string().optional(),
   reason_entry: z.string().optional(),
   reason_outcome: z.string().optional(),
   lessons_learned: z.string().optional(),

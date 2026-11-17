@@ -21,6 +21,8 @@ import {
   Edit2,
   Trash2,
   ExternalLink,
+  Radio,
+  User,
 } from "lucide-react";
 
 export default function JournalPage() {
@@ -28,6 +30,7 @@ export default function JournalPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [marketFilter, setMarketFilter] = useState("ALL");
+  const [sourceFilter, setSourceFilter] = useState("ALL");
 
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
@@ -58,13 +61,27 @@ export default function JournalPage() {
     }
   };
 
+  const knownProviders = Array.from(
+    new Set(
+      trades
+        .map((t) => t.signal_provider?.trim())
+        .filter((p): p is string => Boolean(p && p.toLowerCase() !== "self"))
+    )
+  );
+
   const filtered = trades.filter((t) => {
     if (statusFilter !== "ALL" && t.status !== statusFilter) return false;
     if (marketFilter !== "ALL" && t.market !== marketFilter) return false;
+    if (sourceFilter === "SELF") {
+      if (t.signal_provider && t.signal_provider.toLowerCase() !== "self") return false;
+    } else if (sourceFilter !== "ALL") {
+      if (t.signal_provider?.toLowerCase() !== sourceFilter.toLowerCase()) return false;
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       return (
         t.symbol.toLowerCase().includes(q) ||
+        t.signal_provider?.toLowerCase().includes(q) ||
         t.reason_entry?.toLowerCase().includes(q) ||
         t.reason_outcome?.toLowerCase().includes(q) ||
         t.strategy?.toLowerCase().includes(q)
@@ -153,6 +170,20 @@ export default function JournalPage() {
                 <option value="COMMODITY">Gold & Commodities</option>
                 <option value="INDEX">Indices</option>
               </select>
+
+              <select
+                value={sourceFilter}
+                onChange={(e) => setSourceFilter(e.target.value)}
+                className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none font-medium"
+              >
+                <option value="ALL">All Sources (Self + Signals)</option>
+                <option value="SELF">👤 My Own Trades</option>
+                {knownProviders.map((p) => (
+                  <option key={p} value={p}>
+                    📡 {p}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -231,6 +262,18 @@ export default function JournalPage() {
                             >
                               {trade.status}
                             </Badge>
+
+                            {trade.signal_provider && trade.signal_provider.toLowerCase() !== "self" ? (
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-500/15 text-violet-300 border border-violet-500/30 font-medium flex items-center gap-1">
+                                <Radio className="w-2.5 h-2.5 text-violet-400" />
+                                {trade.signal_provider}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 font-medium flex items-center gap-1">
+                                <User className="w-2.5 h-2.5 text-slate-400" />
+                                Self
+                              </span>
+                            )}
                           </div>
                           <p className="text-[11px] text-slate-400 font-mono mt-0.5">
                             {formatDate(trade.trade_date)} {trade.strategy ? `• ${trade.strategy}` : ""}

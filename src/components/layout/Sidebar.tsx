@@ -11,6 +11,7 @@ import {
   Target,
   BarChart3,
   Calculator,
+  Radio,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,11 @@ const NAV_ITEMS = [
     name: "Trading Journal",
     href: "/journal",
     icon: BookOpen,
+  },
+  {
+    name: "Signal Providers",
+    href: "/signals",
+    icon: Radio,
   },
   {
     name: "Daily & Calendar",

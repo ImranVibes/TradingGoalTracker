@@ -69,6 +69,15 @@ export const RecentTradesTable: React.FC<RecentTradesTableProps> = ({
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase font-mono">
                         {trade.market}
                       </span>
+                      {trade.signal_provider && trade.signal_provider.toLowerCase() !== "self" ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30 font-medium">
+                          📡 {trade.signal_provider}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800/80 text-slate-400 font-medium">
+                          Self
+                        </span>
+                      )}
                     </div>
                   </td>
 

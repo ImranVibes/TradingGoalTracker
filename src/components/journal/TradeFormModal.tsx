@@ -5,7 +5,7 @@ import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Trade, TradeDirection, TradeStatus, MarketType } from "@/lib/types";
 import { toDateInputValue, calculateRR } from "@/lib/utils";
-import { TrendingUp, TrendingDown, ChevronDown, ChevronUp } from "lucide-react";
+import { TrendingUp, TrendingDown, ChevronDown, ChevronUp, User, Radio, Plus } from "lucide-react";
 
 interface TradeFormModalProps {
   isOpen: boolean;
@@ -31,6 +31,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [strategy, setStrategy] = useState("");
   const [reasonEntry, setReasonEntry] = useState("");
   const [reasonOutcome, setReasonOutcome] = useState("");
+  const [signalProvider, setSignalProvider] = useState("Self");
+  const [providers, setProviders] = useState<{ id: string; name: string; color?: string }[]>([]);
+  const [isAddingCustomProvider, setIsAddingCustomProvider] = useState(false);
 
   // Optional execution details toggle
   const [showDetails, setShowDetails] = useState(false);
@@ -46,6 +49,17 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (isOpen) {
+      fetch("/api/providers")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.providers)) {
+            setProviders(data.providers.filter((p: any) => p.name.toLowerCase() !== "self"));
+          }
+        })
+        .catch(() => {});
+    }
+
     if (editTrade) {
       setSymbol(editTrade.symbol);
       setDirection(editTrade.direction || "LONG");
@@ -53,6 +67,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setStatus(editTrade.status);
       setTradeDate(toDateInputValue(editTrade.trade_date));
       setStrategy(editTrade.strategy || "");
+      setSignalProvider(editTrade.signal_provider || "Self");
       setReasonEntry(editTrade.reason_entry || "");
       setReasonOutcome(editTrade.reason_outcome || "");
       setEntryPrice(editTrade.entry_price ? String(editTrade.entry_price) : "");
@@ -77,6 +92,8 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     setStatus("WON");
     setTradeDate(toDateInputValue());
     setStrategy("");
+    setSignalProvider("Self");
+    setIsAddingCustomProvider(false);
     setReasonEntry("");
     setReasonOutcome("");
     setEntryPrice("");
@@ -122,6 +139,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         status,
         trade_date: new Date(tradeDate).toISOString(),
         strategy: strategy.trim(),
+        signal_provider: signalProvider.trim() || "Self",
         reason_entry: reasonEntry.trim(),
         reason_outcome: reasonOutcome.trim(),
         entry_price: entryPrice ? parseFloat(entryPrice) : null,
@@ -176,6 +194,96 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             {error}
           </div>
         )}
+
+        {/* Trade Source / Signal Provider */}
+        <div className="rounded-xl border border-slate-800 bg-[#0b101d] p-3">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
+              <Radio className="w-3.5 h-3.5 text-sky-400" />
+              Trade Source / Signal Provider
+            </label>
+            <span className="text-[10px] text-slate-400 font-mono">
+              {signalProvider.toLowerCase() === "self" ? "Personal Trade" : `Copied from ${signalProvider}`}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Self button */}
+            <button
+              type="button"
+              onClick={() => {
+                setSignalProvider("Self");
+                setIsAddingCustomProvider(false);
+              }}
+              className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+                signalProvider.toLowerCase() === "self" && !isAddingCustomProvider
+                  ? "bg-sky-500/20 text-sky-300 border-sky-500/60 shadow-sm"
+                  : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white"
+              }`}
+            >
+              <User className="w-3.5 h-3.5 text-sky-400" />
+              Self (My Own Trade)
+            </button>
+
+            {/* Followed traders */}
+            {providers.map((p) => {
+              const isSelected =
+                signalProvider.toLowerCase() === p.name.toLowerCase() && !isAddingCustomProvider;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setSignalProvider(p.name);
+                    setIsAddingCustomProvider(false);
+                  }}
+                  className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+                    isSelected
+                      ? "bg-violet-500/20 text-violet-300 border-violet-500/60 shadow-sm"
+                      : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white"
+                  }`}
+                >
+                  <Radio className="w-3 h-3 text-violet-400" />
+                  {p.name}
+                </button>
+              );
+            })}
+
+            {/* Add or other trader */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsAddingCustomProvider(!isAddingCustomProvider);
+                if (!isAddingCustomProvider && signalProvider.toLowerCase() === "self") {
+                  setSignalProvider("");
+                }
+              }}
+              className={`px-2 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1 ${
+                isAddingCustomProvider
+                  ? "bg-indigo-500/20 text-indigo-300 border-indigo-500/50"
+                  : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"
+              }`}
+            >
+              <Plus className="w-3 h-3" />
+              {isAddingCustomProvider ? "Cancel" : "+ Other Trader"}
+            </button>
+          </div>
+
+          {/* Inline custom name input */}
+          {isAddingCustomProvider && (
+            <div className="mt-2.5 pt-2.5 border-t border-slate-800 flex items-center gap-2">
+              <input
+                type="text"
+                value={signalProvider === "Self" ? "" : signalProvider}
+                onChange={(e) => setSignalProvider(e.target.value)}
+                placeholder="Enter Trader Name (e.g. ABC Trader, John FX...)"
+                className="flex-1 rounded-lg bg-slate-950 border border-indigo-500/50 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none"
+                autoFocus
+              />
+              <span className="text-[10px] text-slate-400 whitespace-nowrap">Auto-saves to followed traders</span>
+            </div>
+          )}
+        </div>
 
         {/* Currency & Direction */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

@@ -20,6 +20,7 @@ export interface Trade {
   timeframe?: string;
   session?: string;
   strategy?: string;
+  signal_provider?: string;
   reason_entry?: string;
   reason_outcome?: string;
   lessons_learned?: string;
@@ -75,6 +76,45 @@ export interface DailySummary {
   trades?: Trade[];
 }
 
+export interface SignalProvider {
+  id: string;
+  name: string;
+  notes?: string;
+  telegram_handle?: string;
+  color?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface SignalProviderStats {
+  name: string;
+  is_self: boolean;
+  color: string;
+  notes?: string;
+  telegram_handle?: string;
+  total_pnl: number;
+  total_trades: number;
+  wins: number;
+  losses: number;
+  breakeven: number;
+  win_rate: number;
+  profit_factor: number;
+  total_profit: number;
+  total_loss: number;
+  average_win: number;
+  average_loss: number;
+  largest_win: number;
+  largest_loss: number;
+  expectancy: number;
+  top_pairs: {
+    symbol: string;
+    count: number;
+    pnl: number;
+    win_rate: number;
+  }[];
+  recent_trades?: Trade[];
+}
+
 export interface DashboardStats {
   net_pnl: number;
   total_profit: number;
@@ -104,4 +144,5 @@ export interface DashboardStats {
     count: number;
     win_rate: number;
   }[];
+  provider_distribution: SignalProviderStats[];
 }

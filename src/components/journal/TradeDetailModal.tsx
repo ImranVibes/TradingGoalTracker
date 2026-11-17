@@ -14,6 +14,8 @@ import {
   Trash2,
   CheckCircle2,
   HelpCircle,
+  Radio,
+  User,
 } from "lucide-react";
 
 interface TradeDetailModalProps {
@@ -105,8 +107,24 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           </div>
         </div>
 
-        {/* Pricing & Strategy Details */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        {/* Pricing, Strategy & Signal Source Details */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Signal Source</span>
+            <span className="font-semibold text-white truncate block mt-0.5 flex items-center gap-1">
+              {trade.signal_provider && trade.signal_provider.toLowerCase() !== "self" ? (
+                <>
+                  <Radio className="w-3 h-3 text-violet-400 flex-shrink-0" />
+                  <span className="text-violet-300 truncate">{trade.signal_provider}</span>
+                </>
+              ) : (
+                <>
+                  <User className="w-3 h-3 text-sky-400 flex-shrink-0" />
+                  <span className="text-sky-300 truncate">Self</span>
+                </>
+              )}
+            </span>
+          </div>
           <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Strategy</span>
             <span className="font-semibold text-white truncate block mt-0.5">
@@ -121,7 +139,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <span className="text-slate-400 block text-[10px] uppercase">Exit Price</span>
             <span className="font-mono text-white block mt-0.5">{trade.exit_price || "-"}</span>
           </div>
-          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 col-span-2 sm:col-span-1">
             <span className="text-slate-400 block text-[10px] uppercase">Lot Size</span>
             <span className="font-mono text-white block mt-0.5">{trade.quantity || 1}</span>
           </div>

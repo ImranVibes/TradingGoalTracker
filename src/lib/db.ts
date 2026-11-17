@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import fs from "fs";
 import path from "path";
-import { Trade, Cashflow, Goal, DailySummary, DashboardStats } from "./types";
+import { Trade, Cashflow, Goal, DailySummary, DashboardStats, SignalProvider, SignalProviderStats } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const LOCAL_STORE_FILE = path.join(DATA_DIR, "tracker_store.json");
@@ -37,6 +37,7 @@ interface LocalStore {
   cashflows: Cashflow[];
   goals: Goal[];
   dailySummaries: Record<string, DailySummary>;
+  signal_providers: SignalProvider[];
   settings: Record<string, any>;
 }
 
@@ -44,7 +45,15 @@ function loadLocalStore(): LocalStore {
   if (fs.existsSync(LOCAL_STORE_FILE)) {
     try {
       const content = fs.readFileSync(LOCAL_STORE_FILE, "utf-8");
-      return JSON.parse(content);
+      const parsed = JSON.parse(content);
+      if (!parsed.signal_providers || parsed.signal_providers.length === 0) {
+        parsed.signal_providers = [
+          { id: "sp_self", name: "Self", notes: "My own trades & setups", color: "sky", created_at: new Date().toISOString() },
+          { id: "sp_abc", name: "ABC Trader", notes: "Signals from ABC Trader", color: "violet", created_at: new Date().toISOString() },
+          { id: "sp_xyz", name: "XYZ Trader", notes: "Signals from XYZ Trader", color: "emerald", created_at: new Date().toISOString() }
+        ];
+      }
+      return parsed;
     } catch (e) {
       console.error("[LocalStore] Error reading local store:", e);
     }
@@ -55,6 +64,11 @@ function loadLocalStore(): LocalStore {
     cashflows: [],
     goals: [],
     dailySummaries: {},
+    signal_providers: [
+      { id: "sp_self", name: "Self", notes: "My own trades & setups", color: "sky", created_at: new Date().toISOString() },
+      { id: "sp_abc", name: "ABC Trader", notes: "Signals from ABC Trader", color: "violet", created_at: new Date().toISOString() },
+      { id: "sp_xyz", name: "XYZ Trader", notes: "Signals from XYZ Trader", color: "emerald", created_at: new Date().toISOString() }
+    ],
     settings: {
       account_balance: 10000,
       currency: "USD",
@@ -94,6 +108,7 @@ async function initPostgresTables(client: any) {
       timeframe VARCHAR(16) DEFAULT '1h',
       session VARCHAR(32) DEFAULT '',
       strategy VARCHAR(64) DEFAULT '',
+      signal_provider VARCHAR(100) DEFAULT 'Self',
       reason_entry TEXT DEFAULT '',
       reason_outcome TEXT DEFAULT '',
       lessons_learned TEXT DEFAULT '',
@@ -103,6 +118,27 @@ async function initPostgresTables(client: any) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    -- Ensure signal_provider column exists for existing tables
+    ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS signal_provider VARCHAR(100) DEFAULT 'Self';
+
+    CREATE TABLE IF NOT EXISTS tracker_signal_providers (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(100) NOT NULL UNIQUE,
+      notes TEXT DEFAULT '',
+      telegram_handle VARCHAR(100) DEFAULT '',
+      color VARCHAR(32) DEFAULT 'sky',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    -- Seed default providers if table is empty
+    INSERT INTO tracker_signal_providers (id, name, notes, color)
+    VALUES 
+      ('sp_self', 'Self', 'My own trades & setups', 'sky'),
+      ('sp_abc', 'ABC Trader', 'Signals from ABC Trader', 'violet'),
+      ('sp_xyz', 'XYZ Trader', 'Signals from XYZ Trader', 'emerald')
+    ON CONFLICT (name) DO NOTHING;
 
     CREATE TABLE IF NOT EXISTS tracker_cashflows (
       id VARCHAR(64) PRIMARY KEY,
@@ -146,6 +182,7 @@ async function initPostgresTables(client: any) {
 
     CREATE INDEX IF NOT EXISTS idx_tracker_trades_date ON tracker_trades(trade_date);
     CREATE INDEX IF NOT EXISTS idx_tracker_trades_symbol ON tracker_trades(symbol);
+    CREATE INDEX IF NOT EXISTS idx_tracker_trades_signal_provider ON tracker_trades(signal_provider);
     CREATE INDEX IF NOT EXISTS idx_tracker_cashflow_date ON tracker_cashflows(date);
   `);
 }
@@ -186,6 +223,7 @@ export async function getTrades(filters?: {
   status?: string;
   startDate?: string;
   endDate?: string;
+  signal_provider?: string;
 }): Promise<Trade[]> {
   const { isPostgres } = await checkConnection();
 
@@ -211,11 +249,20 @@ export async function getTrades(filters?: {
       query += ` AND trade_date <= $${idx++}`;
       values.push(filters.endDate);
     }
+    if (filters?.signal_provider) {
+      if (filters.signal_provider.toLowerCase() === "self") {
+        query += ` AND (signal_provider = 'Self' OR signal_provider IS NULL OR signal_provider = '')`;
+      } else {
+        query += ` AND UPPER(signal_provider) = $${idx++}`;
+        values.push(filters.signal_provider.toUpperCase());
+      }
+    }
 
     query += " ORDER BY trade_date DESC";
     const res = await p.query(query, values);
     return res.rows.map((r: any) => ({
       ...r,
+      signal_provider: r.signal_provider || "Self",
       tags: typeof r.tags === "string" ? JSON.parse(r.tags || "[]") : r.tags || [],
       trade_date: new Date(r.trade_date).toISOString(),
       closed_date: r.closed_date ? new Date(r.closed_date).toISOString() : null,
@@ -238,6 +285,15 @@ export async function getTrades(filters?: {
     if (filters?.endDate) {
       result = result.filter((t) => t.trade_date <= filters.endDate!);
     }
+    if (filters?.signal_provider) {
+      if (filters.signal_provider.toLowerCase() === "self") {
+        result = result.filter((t) => !t.signal_provider || t.signal_provider.toLowerCase() === "self");
+      } else {
+        result = result.filter(
+          (t) => t.signal_provider?.toLowerCase() === filters.signal_provider?.toLowerCase()
+        );
+      }
+    }
 
     return result.sort((a, b) => new Date(b.trade_date).getTime() - new Date(a.trade_date).getTime());
   }
@@ -253,6 +309,7 @@ export async function getTradeById(id: string): Promise<Trade | null> {
     const r = res.rows[0];
     return {
       ...r,
+      signal_provider: r.signal_provider || "Self",
       tags: typeof r.tags === "string" ? JSON.parse(r.tags || "[]") : r.tags || [],
       trade_date: new Date(r.trade_date).toISOString(),
       closed_date: r.closed_date ? new Date(r.closed_date).toISOString() : null,
@@ -267,6 +324,7 @@ export async function getTradeById(id: string): Promise<Trade | null> {
 
 export async function createTrade(trade: Trade): Promise<Trade> {
   const { isPostgres } = await checkConnection();
+  const provider = trade.signal_provider?.trim() || "Self";
 
   if (isPostgres) {
     const p = getPool();
@@ -274,9 +332,9 @@ export async function createTrade(trade: Trade): Promise<Trade> {
       `INSERT INTO tracker_trades (
         id, symbol, market, direction, entry_price, exit_price, stop_loss, take_profit,
         quantity, pnl, pnl_percentage, status, trade_date, closed_date, timeframe,
-        session, strategy, reason_entry, reason_outcome, lessons_learned, emotions_notes,
+        session, strategy, signal_provider, reason_entry, reason_outcome, lessons_learned, emotions_notes,
         chart_url, tags, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)`,
       [
         trade.id,
         trade.symbol.toUpperCase(),
@@ -295,6 +353,7 @@ export async function createTrade(trade: Trade): Promise<Trade> {
         trade.timeframe || "1h",
         trade.session || "",
         trade.strategy || "",
+        provider,
         trade.reason_entry || "",
         trade.reason_outcome || "",
         trade.lessons_learned || "",
@@ -307,24 +366,34 @@ export async function createTrade(trade: Trade): Promise<Trade> {
     );
   } else {
     const store = loadLocalStore();
-    store.trades.unshift(trade);
+    store.trades.unshift({ ...trade, signal_provider: provider });
     saveLocalStore(store);
+  }
+
+  if (provider && provider.toLowerCase() !== "self") {
+    await ensureSignalProviderExists(provider);
   }
 
   const dateKey = trade.trade_date.split("T")[0];
   await syncDailySummary(dateKey);
   await syncGoals();
 
-  return trade;
+  return { ...trade, signal_provider: provider };
 }
 
 export async function updateTrade(id: string, updates: Partial<Trade>): Promise<Trade | null> {
   const existing = await getTradeById(id);
   if (!existing) return null;
 
+  const provider =
+    updates.signal_provider !== undefined
+      ? updates.signal_provider?.trim() || "Self"
+      : existing.signal_provider || "Self";
+
   const updated: Trade = {
     ...existing,
     ...updates,
+    signal_provider: provider,
     updated_at: new Date().toISOString(),
   };
 
@@ -337,9 +406,9 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
         symbol = $1, market = $2, direction = $3, entry_price = $4, exit_price = $5,
         stop_loss = $6, take_profit = $7, quantity = $8, pnl = $9, pnl_percentage = $10,
         status = $11, trade_date = $12, closed_date = $13, timeframe = $14, session = $15,
-        strategy = $16, reason_entry = $17, reason_outcome = $18, lessons_learned = $19,
-        emotions_notes = $20, chart_url = $21, tags = $22, updated_at = $23
-      WHERE id = $24`,
+        strategy = $16, signal_provider = $17, reason_entry = $18, reason_outcome = $19, lessons_learned = $20,
+        emotions_notes = $21, chart_url = $22, tags = $23, updated_at = $24
+      WHERE id = $25`,
       [
         updated.symbol.toUpperCase(),
         updated.market || "FOREX",
@@ -357,6 +426,7 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
         updated.timeframe || "",
         updated.session || "",
         updated.strategy || "",
+        provider,
         updated.reason_entry || "",
         updated.reason_outcome || "",
         updated.lessons_learned || "",
@@ -374,6 +444,10 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
       store.trades[idx] = updated;
       saveLocalStore(store);
     }
+  }
+
+  if (provider && provider.toLowerCase() !== "self") {
+    await ensureSignalProviderExists(provider);
   }
 
   const dateKey = updated.trade_date.split("T")[0];
@@ -853,6 +927,8 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     }))
     .sort((a, b) => b.pnl - a.pnl);
 
+  const provider_distribution = await getSignalProviderStats();
+
   return {
     net_pnl: Number(net_pnl.toFixed(2)),
     total_profit: Number(total_profit.toFixed(2)),
@@ -873,5 +949,238 @@ export async function getDashboardStats(): Promise<DashboardStats> {
     largest_loss: Number(largest_loss.toFixed(2)),
     equity_curve,
     pair_distribution,
+    provider_distribution,
   };
+}
+
+// -----------------------------------------------------------------------------
+// SIGNAL PROVIDERS API
+// -----------------------------------------------------------------------------
+const PROVIDER_COLORS = ["sky", "violet", "emerald", "amber", "rose", "fuchsia", "cyan", "indigo"];
+
+export async function getSignalProviders(): Promise<SignalProvider[]> {
+  const { isPostgres } = await checkConnection();
+
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT * FROM tracker_signal_providers ORDER BY created_at ASC");
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      notes: r.notes || "",
+      telegram_handle: r.telegram_handle || "",
+      color: r.color || "sky",
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    }));
+  } else {
+    const store = loadLocalStore();
+    return store.signal_providers || [];
+  }
+}
+
+export async function ensureSignalProviderExists(name: string, notes?: string): Promise<SignalProvider> {
+  const cleanName = name.trim();
+  if (!cleanName) throw new Error("Provider name is required");
+
+  const existingProviders = await getSignalProviders();
+  const existing = existingProviders.find((p) => p.name.toLowerCase() === cleanName.toLowerCase());
+  if (existing) return existing;
+
+  const colorIndex = existingProviders.length % PROVIDER_COLORS.length;
+  const color = PROVIDER_COLORS[colorIndex];
+  return await createSignalProvider({ name: cleanName, notes: notes || `Signals from ${cleanName}`, color });
+}
+
+export async function createSignalProvider(data: Partial<SignalProvider>): Promise<SignalProvider> {
+  const { isPostgres } = await checkConnection();
+  const now = new Date().toISOString();
+  const id = data.id || `sp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const name = data.name?.trim() || "Unknown Trader";
+  const notes = data.notes?.trim() || "";
+  const telegram_handle = data.telegram_handle?.trim() || "";
+  const color = data.color || PROVIDER_COLORS[Math.floor(Math.random() * PROVIDER_COLORS.length)];
+
+  const provider: SignalProvider = {
+    id,
+    name,
+    notes,
+    telegram_handle,
+    color,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_signal_providers (id, name, notes, telegram_handle, color, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (name) DO UPDATE SET notes = EXCLUDED.notes, telegram_handle = EXCLUDED.telegram_handle, color = EXCLUDED.color, updated_at = NOW()`,
+      [id, name, notes, telegram_handle, color, now, now]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.signal_providers) store.signal_providers = [];
+    const idx = store.signal_providers.findIndex((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (idx !== -1) {
+      store.signal_providers[idx] = { ...store.signal_providers[idx], notes, telegram_handle, color, updated_at: now };
+    } else {
+      store.signal_providers.push(provider);
+    }
+    saveLocalStore(store);
+  }
+
+  return provider;
+}
+
+export async function deleteSignalProvider(idOrName: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query("DELETE FROM tracker_signal_providers WHERE id = $1 OR UPPER(name) = UPPER($1)", [idOrName]);
+    return true;
+  } else {
+    const store = loadLocalStore();
+    if (!store.signal_providers) return false;
+    store.signal_providers = store.signal_providers.filter(
+      (p) => p.id !== idOrName && p.name.toLowerCase() !== idOrName.toLowerCase()
+    );
+    saveLocalStore(store);
+    return true;
+  }
+}
+
+export async function getSignalProviderStats(): Promise<SignalProviderStats[]> {
+  const trades = await getTrades();
+  const registeredProviders = await getSignalProviders();
+
+  // Map of known providers
+  const providerMap = new Map<string, { id: string; name: string; notes?: string; telegram_handle?: string; color: string }>();
+
+  // Ensure 'Self' always exists
+  providerMap.set("self", {
+    id: "sp_self",
+    name: "Self",
+    notes: "My own independent analysis & trades",
+    telegram_handle: "",
+    color: "sky",
+  });
+
+  for (const p of registeredProviders) {
+    providerMap.set(p.name.toLowerCase(), {
+      id: p.id,
+      name: p.name,
+      notes: p.notes,
+      telegram_handle: p.telegram_handle,
+      color: p.color || "violet",
+    });
+  }
+
+  // Also discover any provider names from trades that might not be registered
+  for (const t of trades) {
+    const name = t.signal_provider?.trim() || "Self";
+    const key = name.toLowerCase();
+    if (!providerMap.has(key)) {
+      providerMap.set(key, {
+        id: `sp_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        name,
+        notes: `Signals from ${name}`,
+        telegram_handle: "",
+        color: PROVIDER_COLORS[providerMap.size % PROVIDER_COLORS.length],
+      });
+    }
+  }
+
+  // Calculate detailed stats for each provider
+  const statsList: SignalProviderStats[] = [];
+
+  for (const [key, meta] of providerMap.entries()) {
+    const isSelf = key === "self";
+    const providerTrades = trades.filter((t) => {
+      const pName = (t.signal_provider?.trim() || "Self").toLowerCase();
+      return pName === key;
+    });
+
+    let total_profit = 0;
+    let total_loss = 0;
+    let won_trades = 0;
+    let lost_trades = 0;
+    let breakeven_trades = 0;
+    let largest_win = 0;
+    let largest_loss = 0;
+
+    const pairMap: Record<string, { count: number; pnl: number; wins: number }> = {};
+
+    for (const t of providerTrades) {
+      const pnl = Number(t.pnl || 0);
+      const sym = t.symbol.toUpperCase();
+      if (!pairMap[sym]) pairMap[sym] = { count: 0, pnl: 0, wins: 0 };
+      pairMap[sym].count += 1;
+      pairMap[sym].pnl += pnl;
+
+      if (t.status === "WON" || pnl > 0) {
+        won_trades++;
+        pairMap[sym].wins += 1;
+        total_profit += pnl;
+        if (pnl > largest_win) largest_win = pnl;
+      } else if (t.status === "LOST" || pnl < 0) {
+        lost_trades++;
+        total_loss += Math.abs(pnl);
+        if (Math.abs(pnl) > largest_loss) largest_loss = Math.abs(pnl);
+      } else if (t.status === "BREAKEVEN") {
+        breakeven_trades++;
+      }
+    }
+
+    const total_trades = providerTrades.length;
+    const closed_trades = won_trades + lost_trades + breakeven_trades;
+    const win_rate = closed_trades > 0 ? Number(((won_trades / closed_trades) * 100).toFixed(1)) : 0;
+    const total_pnl = total_profit - total_loss;
+    const profit_factor = total_loss > 0 ? Number((total_profit / total_loss).toFixed(2)) : total_profit > 0 ? 99.9 : 0;
+    const average_win = won_trades > 0 ? Number((total_profit / won_trades).toFixed(2)) : 0;
+    const average_loss = lost_trades > 0 ? Number((total_loss / lost_trades).toFixed(2)) : 0;
+    const expectancy = total_trades > 0 ? Number((total_pnl / total_trades).toFixed(2)) : 0;
+
+    const top_pairs = Object.entries(pairMap)
+      .map(([symbol, data]) => ({
+        symbol,
+        count: data.count,
+        pnl: Number(data.pnl.toFixed(2)),
+        win_rate: data.count > 0 ? Number(((data.wins / data.count) * 100).toFixed(1)) : 0,
+      }))
+      .sort((a, b) => b.pnl - a.pnl);
+
+    statsList.push({
+      name: meta.name,
+      is_self: isSelf,
+      color: meta.color,
+      notes: meta.notes,
+      telegram_handle: meta.telegram_handle,
+      total_pnl: Number(total_pnl.toFixed(2)),
+      total_trades,
+      wins: won_trades,
+      losses: lost_trades,
+      breakeven: breakeven_trades,
+      win_rate,
+      profit_factor,
+      total_profit: Number(total_profit.toFixed(2)),
+      total_loss: Number(total_loss.toFixed(2)),
+      average_win,
+      average_loss,
+      largest_win: Number(largest_win.toFixed(2)),
+      largest_loss: Number(largest_loss.toFixed(2)),
+      expectancy,
+      top_pairs,
+      recent_trades: providerTrades.slice(0, 5),
+    });
+  }
+
+  // Sort: Put "Self" first, then sort followed signal providers by highest net_pnl descending
+  return statsList.sort((a, b) => {
+    if (a.is_self) return -1;
+    if (b.is_self) return 1;
+    return b.total_pnl - a.total_pnl;
+  });
 }

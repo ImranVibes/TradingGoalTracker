@@ -21,6 +21,7 @@ import {
   PlusCircle,
   ArrowRight,
   Calculator,
+  Radio,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -232,6 +233,59 @@ export default function DashboardPage() {
               </button>
             </div>
           </div>
+
+          {/* Signal Providers Attribution Banner */}
+          {stats?.provider_distribution && stats.provider_distribution.length > 0 && (
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-violet-500/10 text-violet-400 border border-violet-500/20">
+                  <Radio className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    Signal Attribution Breakdown
+                  </h4>
+                  <p className="text-xs text-slate-400">
+                    Comparing profits between your own trading setups and followed traders
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {stats.provider_distribution.slice(0, 4).map((p) => {
+                  const isProfit = p.total_pnl > 0;
+                  const isLoss = p.total_pnl < 0;
+                  return (
+                    <div
+                      key={p.name}
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 flex items-center gap-2 text-xs"
+                    >
+                      <span className="font-semibold text-slate-300 flex items-center gap-1">
+                        {p.is_self ? "👤 Self" : `📡 ${p.name}`}
+                      </span>
+                      <span
+                        className={`font-mono font-bold ${
+                          isProfit ? "text-emerald-400" : isLoss ? "text-rose-400" : "text-slate-400"
+                        }`}
+                      >
+                        {formatCurrency(p.total_pnl, true)}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        ({p.win_rate}%)
+                      </span>
+                    </div>
+                  );
+                })}
+
+                <Link
+                  href="/signals"
+                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-600/20 hover:bg-violet-600/30 text-violet-300 border border-violet-500/30 transition-colors flex items-center gap-1"
+                >
+                  Full Comparison <ArrowRight className="w-3.5 h-3.5" />
+                </Link>
+              </div>
+            </div>
+          )}
 
           {/* Recent Trades Table */}
           <div className="space-y-3">
