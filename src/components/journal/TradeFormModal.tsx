@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Trade, TradeDirection, TradeStatus } from "@/lib/types";
+import { useAccounts } from "../providers/AccountProvider";
 import { toDateInputValue, calculateRR } from "@/lib/utils";
 import {
   TrendingUp,
@@ -44,10 +45,16 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   onSuccess,
   editTrade,
 }) => {
+  const { accounts, activeAccountId, refreshAccounts } = useAccounts();
+  const defaultAccountId = activeAccountId && activeAccountId !== "ALL" ? activeAccountId : "acc_default";
+
   const [activeMode, setActiveMode] = useState<"quick" | "full">("quick");
+  const [accountId, setAccountId] = useState(defaultAccountId);
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [direction, setDirection] = useState<TradeDirection>("LONG");
   const [pnl, setPnl] = useState("");
+  const [tradingFee, setTradingFee] = useState("0");
+  const [fundingFee, setFundingFee] = useState("0");
   const [status, setStatus] = useState<TradeStatus>("WON");
   const [tradeDate, setTradeDate] = useState(toDateInputValue());
   const [strategy, setStrategy] = useState("");
@@ -85,9 +92,12 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     }
 
     if (editTrade) {
+      setAccountId(editTrade.account_id || "acc_default");
       setSymbol(editTrade.symbol);
       setDirection(editTrade.direction || "LONG");
       setPnl(String(editTrade.pnl));
+      setTradingFee(String(editTrade.trading_fee ?? 0));
+      setFundingFee(String(editTrade.funding_fee ?? 0));
       setStatus(editTrade.status);
       setTradeDate(toDateInputValue(editTrade.trade_date));
       setStrategy(editTrade.strategy || "");
@@ -109,12 +119,15 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     } else {
       resetForm();
     }
-  }, [editTrade, isOpen]);
+  }, [editTrade, isOpen, defaultAccountId]);
 
   const resetForm = () => {
+    setAccountId(defaultAccountId);
     setSymbol("BTCUSDT");
     setDirection("LONG");
     setPnl("");
+    setTradingFee("0");
+    setFundingFee("0");
     setStatus("WON");
     setTradeDate(toDateInputValue());
     setStrategy("");
@@ -226,10 +239,17 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
 
     setLoading(true);
     try {
+      const netPnlNum = parseFloat(pnl) || 0;
+      const tFeeNum = Math.abs(parseFloat(tradingFee) || 0);
+      const fFeeNum = parseFloat(fundingFee) || 0;
       const payload = {
+        account_id: accountId || "acc_default",
         symbol: symbol.toUpperCase().trim(),
         direction,
-        pnl: parseFloat(pnl) || 0,
+        pnl: netPnlNum,
+        trading_fee: tFeeNum,
+        funding_fee: fFeeNum,
+        gross_pnl: Number((netPnlNum + tFeeNum - fFeeNum).toFixed(4)),
         status,
         trade_date: new Date(tradeDate).toISOString(),
         strategy: strategy.trim(),
@@ -261,6 +281,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         throw new Error(data.error || "Failed to save trade");
       }
 
+      await refreshAccounts();
       onSuccess(data.trade);
       onClose();
     } catch (err: any) {
@@ -317,6 +338,55 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
             Full Execution (Entry, Exit, SL, TP)
           </button>
+        </div>
+
+        {/* Account Assignment & Fees */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 rounded-xl border border-slate-800 bg-[#0b101d] p-3">
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+              Trading Account / Target
+            </label>
+            <select
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              className="w-full rounded-lg bg-slate-900 border border-slate-700/80 px-2.5 py-1.5 text-xs text-white focus:border-sky-500 focus:outline-none font-medium"
+            >
+              {accounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.name}
+                </option>
+              ))}
+              {accounts.length === 0 && <option value="acc_default">Main Account</option>}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+              Trading Fee ($)
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={tradingFee}
+              onChange={(e) => setTradingFee(e.target.value)}
+              placeholder="0.00"
+              className="w-full rounded-lg bg-slate-900 border border-slate-700/80 px-2.5 py-1.5 text-xs font-mono text-amber-300 focus:border-sky-500 focus:outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+              Funding Fee ($ signed)
+            </label>
+            <input
+              type="number"
+              step="any"
+              value={fundingFee}
+              onChange={(e) => setFundingFee(e.target.value)}
+              placeholder="0.00 (- paid / + earned)"
+              className="w-full rounded-lg bg-slate-900 border border-slate-700/80 px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:border-sky-500 focus:outline-none"
+            />
+          </div>
         </div>
 
         {/* Trade Source / Signal Provider */}

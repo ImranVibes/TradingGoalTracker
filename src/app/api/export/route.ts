@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTrades, getCashflows, getGoals, getUserSettings } from "@/lib/db";
+import { getTrades, getCashflows, getGoals, getUserSettings, getAccounts } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -7,18 +7,23 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const format = searchParams.get("format") || "csv";
+    const account_id = searchParams.get("account_id") || undefined;
 
-    const [trades, cashflows, goals, settings] = await Promise.all([
-      getTrades(),
+    const [trades, cashflows, goals, settings, accounts] = await Promise.all([
+      getTrades(account_id && account_id !== "ALL" ? { account_id } : undefined),
       getCashflows(),
       getGoals(),
       getUserSettings(),
+      getAccounts(),
     ]);
+
+    const accountMap = new Map(accounts.map((a) => [a.id, a.name]));
 
     if (format === "json") {
       const backupData = {
         exported_at: new Date().toISOString(),
         settings,
+        accounts,
         trades,
         cashflows,
         goals,
@@ -32,16 +37,19 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Generate CSV
     const headers = [
       "ID",
+      "Account",
       "Date",
       "Exchange",
       "Symbol",
       "Market",
       "Direction",
       "Status",
-      "Profit_Loss_USD",
+      "Gross_PnL_USD",
+      "Trading_Fee_USD",
+      "Funding_Fee_USD",
+      "Net_PnL_USD",
       "Entry_Price",
       "Exit_Price",
       "Quantity_Lot",
@@ -49,17 +57,21 @@ export async function GET(req: NextRequest) {
       "Signal_Provider",
       "Reason_Entry",
       "Reason_Outcome",
-      "Exchange_Trade_ID",
+      "Exchange_Position_ID",
     ];
 
     const rows = trades.map((t) => [
       t.id,
+      `"${(accountMap.get(t.account_id || "acc_default") || "Main Account").replace(/"/g, '""')}"`,
       t.trade_date ? t.trade_date.split("T")[0] : "",
       t.exchange || "MANUAL",
       t.symbol,
-      t.market || "FOREX",
+      t.market || "CRYPTO",
       t.direction || "LONG",
       t.status,
+      t.gross_pnl ?? t.pnl,
+      t.trading_fee ?? 0,
+      t.funding_fee ?? 0,
       t.pnl,
       t.entry_price ?? "",
       t.exit_price ?? "",
@@ -76,7 +88,7 @@ export async function GET(req: NextRequest) {
     return new NextResponse(csvContent, {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="trades_export_${new Date().toISOString().split("T")[0]}.csv"`,
+        "Content-Disposition": `attachment; filename="positions_export_${new Date().toISOString().split("T")[0]}.csv"`,
       },
     });
   } catch (error: any) {

@@ -6,8 +6,8 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { ExchangeConnection, UserSettings } from "@/lib/types";
-import { formatCurrency } from "@/lib/utils";
 import {
   Settings as SettingsIcon,
   Landmark,
@@ -20,11 +20,15 @@ import {
   KeyRound,
   Sliders,
   Save,
-  HelpCircle,
-  ExternalLink,
+  Sparkles,
+  Layers,
+  Calendar,
+  RotateCcw,
 } from "lucide-react";
 
 export default function SettingsPage() {
+  const { accounts, refreshAccounts } = useAccounts();
+
   const [settings, setSettings] = useState<UserSettings>({
     initial_balance: 10000,
     currency: "USD",
@@ -32,6 +36,7 @@ export default function SettingsPage() {
     risk_per_trade_pct: 1.0,
   });
   const [connections, setConnections] = useState<ExchangeConnection[]>([]);
+  const [ignoredCount, setIgnoredCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -42,12 +47,16 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
   const [category, setCategory] = useState("futures");
+  const [targetAccountId, setTargetAccountId] = useState("acc_default");
+  const [autoSync, setAutoSync] = useState(true);
+  const [syncFromDate, setSyncFromDate] = useState("");
   const [isTesting, setIsTesting] = useState(false);
   const [isSubmittingConn, setIsSubmittingConn] = useState(false);
   const [connMsg, setConnMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // Sync state
+  // Sync & utility state
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [isCleaningLegacy, setIsCleaningLegacy] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   // Global modals
@@ -68,6 +77,7 @@ export default function SettingsPage() {
       }
       if (connRes.success && connRes.connections) {
         setConnections(connRes.connections);
+        setIgnoredCount(connRes.ignored_count || 0);
       }
     } catch (err) {
       console.error(err);
@@ -127,10 +137,10 @@ export default function SettingsPage() {
       if (data.success) {
         setConnMsg({
           type: "success",
-          text: `Success! Connection verified. ${data.balance !== undefined ? `Balance: $${data.balance}` : ""}`,
+          text: `Success! Connection verified. ${data.balance !== undefined ? `Balance: $${data.balance.toFixed(2)}` : ""}`,
         });
       } else {
-        setConnMsg({ type: "error", text: data.error || "API authentication failed." });
+        setConnMsg({ type: "error", text: data.error || data.message || "API authentication failed." });
       }
     } catch (err: any) {
       setConnMsg({ type: "error", text: err.message || "Connection check failed." });
@@ -159,14 +169,18 @@ export default function SettingsPage() {
           api_secret: apiSecret.trim(),
           account_type: category.toUpperCase() === "SPOT" ? "SPOT" : "FUTURES",
           category,
+          account_id: targetAccountId || "acc_default",
+          auto_sync: autoSync,
+          sync_from_date: syncFromDate ? new Date(syncFromDate).toISOString() : null,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setConnMsg({ type: "success", text: "Exchange connection added!" });
+        setConnMsg({ type: "success", text: "Exchange connection added! Click Sync Now to import closed positions." });
         setApiKey("");
         setApiSecret("");
         setLabel("");
+        setSyncFromDate("");
         await fetchAll();
       } else {
         setConnMsg({ type: "error", text: data.error || "Failed to save connection." });
@@ -178,8 +192,24 @@ export default function SettingsPage() {
     }
   };
 
+  const handleUpdateConnection = async (
+    id: string,
+    updates: { account_id?: string; auto_sync?: boolean; sync_from_date?: string | null }
+  ) => {
+    try {
+      await fetch("/api/exchanges", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, ...updates }),
+      });
+      await fetchAll();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleDeleteConnection = async (id: string) => {
-    if (!confirm("Remove this exchange connection? Synced trades will remain in your journal.")) return;
+    if (!confirm("Remove this exchange connection? Synced positions will remain in your journal.")) return;
     try {
       await fetch(`/api/exchanges?id=${id}`, { method: "DELETE" });
       await fetchAll();
@@ -188,7 +218,7 @@ export default function SettingsPage() {
     }
   };
 
-  const handleSyncConnection = async (connId?: string) => {
+  const handleSyncConnection = async (connId?: string, forceFull = false) => {
     setSyncingId(connId || "all");
     setSyncStatus(null);
     try {
@@ -198,20 +228,75 @@ export default function SettingsPage() {
         body: JSON.stringify({
           action: "sync",
           connection_id: connId,
+          forceFull,
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setSyncStatus(`Sync finished! Imported ${data.imported_trades || 0} trades.`);
-        await fetchAll();
+        setSyncStatus(data.message || `Synced ${data.imported_trades || 0} new closed position(s).`);
+        await Promise.all([fetchAll(), refreshAccounts()]);
       } else {
-        setSyncStatus(`Sync failed: ${data.error || "Unknown error"}`);
+        setSyncStatus(`Sync failed: ${data.error || data.message || "Unknown error"}`);
       }
     } catch (err: any) {
       setSyncStatus(`Sync error: ${err.message}`);
     } finally {
       setSyncingId(null);
-      setTimeout(() => setSyncStatus(null), 5000);
+      setTimeout(() => setSyncStatus(null), 6000);
+    }
+  };
+
+  const handleCleanupLegacyFills = async () => {
+    if (
+      !confirm(
+        "Remove any old split partial-fill imports and re-import them cleanly as consolidated Closed Positions with Trading & Funding Fees?"
+      )
+    ) {
+      return;
+    }
+    setIsCleaningLegacy(true);
+    setSyncStatus(null);
+    try {
+      const res = await fetch("/api/exchanges/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cleanup_legacy_fills" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncStatus(data.message);
+        await Promise.all([fetchAll(), refreshAccounts()]);
+      } else {
+        setSyncStatus(data.error || "Cleanup failed.");
+      }
+    } catch (err: any) {
+      setSyncStatus(err.message);
+    } finally {
+      setIsCleaningLegacy(false);
+    }
+  };
+
+  const handleClearIgnored = async () => {
+    if (
+      !confirm(
+        `Reset ${ignoredCount} ignored deleted position(s)? Next full sync will be allowed to import them again.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch("/api/exchanges/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear_ignored" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSyncStatus(data.message);
+        await fetchAll();
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -236,10 +321,10 @@ export default function SettingsPage() {
           <div>
             <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
               <SettingsIcon className="w-5 h-5 text-sky-400" />
-              Settings & Exchange Integrations
+              Settings & Exchange Position Sync
             </h1>
             <p className="text-xs text-slate-400 mt-1">
-              Configure exchange API auto-sync, starting capital, risk parameters, and data backups.
+              Auto-sync consolidated closed positions (with trading & funding fees), choose target accounts, and manage deleted position exclusions.
             </p>
           </div>
 
@@ -252,19 +337,31 @@ export default function SettingsPage() {
                   Exchange Connections (Binance & Bybit)
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Automatically sync closed trades, realized PnL, cashflows, and live account equity.
+                  Consolidates partial fills into single Closed Positions with exact Trading Fees, Funding Fees, and Entry/Exit prices.
                 </p>
               </div>
 
               {connections.length > 0 && (
-                <button
-                  onClick={() => handleSyncConnection()}
-                  disabled={syncingId !== null}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white transition-all flex items-center gap-1.5 self-start sm:self-auto disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${syncingId === "all" ? "animate-spin" : ""}`} />
-                  Sync All Exchanges Now
-                </button>
+                <div className="flex items-center flex-wrap gap-2">
+                  <button
+                    onClick={handleCleanupLegacyFills}
+                    disabled={isCleaningLegacy}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    title="Replace any old split partial fills with clean consolidated positions"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    {isCleaningLegacy ? "Upgrading..." : "Replace Old Partial Fills"}
+                  </button>
+
+                  <button
+                    onClick={() => handleSyncConnection(undefined, false)}
+                    disabled={syncingId !== null}
+                    className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-sky-600 hover:bg-sky-500 text-white transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncingId === "all" ? "animate-spin" : ""}`} />
+                    Sync Latest Positions
+                  </button>
+                </div>
               )}
             </div>
 
@@ -280,13 +377,13 @@ export default function SettingsPage() {
 
             {/* Active Connected Exchanges List */}
             {connections.length > 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-3">
                 {connections.map((conn) => (
                   <div
                     key={conn.id}
-                    className="p-4 rounded-xl border border-slate-800 bg-[#0f172a] flex flex-col justify-between space-y-3"
+                    className="p-4 rounded-xl border border-slate-800 bg-[#0f172a] space-y-3"
                   >
-                    <div className="flex items-start justify-between">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                       <div className="flex items-center gap-2.5">
                         <div
                           className={`p-2 rounded-lg ${
@@ -299,56 +396,137 @@ export default function SettingsPage() {
                         </div>
                         <div>
                           <div className="text-sm font-bold text-white flex items-center gap-2">
-                            {conn.label || conn.exchange.toUpperCase()}
+                            {conn.label || conn.name || conn.exchange.toUpperCase()}
                             <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 font-mono">
-                              {conn.category}
+                              {conn.account_type}
                             </span>
                           </div>
                           <div className="text-xs text-slate-400 font-mono mt-0.5">
-                            Key: {conn.api_key_masked}
+                            Key: {conn.api_key_masked || conn.api_key}
                           </div>
                         </div>
                       </div>
 
-                      <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Active
-                      </span>
-                    </div>
-
-                    <div className="text-[11px] text-slate-400 border-t border-slate-800/80 pt-2 flex items-center justify-between">
-                      <span>
-                        Last synced:{" "}
-                        {conn.last_synced_at
-                          ? new Date(conn.last_synced_at).toLocaleString()
-                          : "Never"}
-                      </span>
-
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-2">
                         <button
-                          onClick={() => handleSyncConnection(conn.id)}
+                          onClick={() => handleSyncConnection(conn.id, false)}
                           disabled={syncingId === conn.id}
-                          className="px-2 py-1 rounded-lg text-xs font-medium text-sky-400 hover:text-sky-300 hover:bg-slate-800 transition-colors flex items-center gap-1 disabled:opacity-50"
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-sky-600/20 text-sky-300 border border-sky-500/30 hover:bg-sky-600/30 transition-colors flex items-center gap-1 disabled:opacity-50"
                         >
-                          <RefreshCw
-                            className={`w-3 h-3 ${syncingId === conn.id ? "animate-spin" : ""}`}
-                          />
-                          Sync
+                          <RefreshCw className={`w-3 h-3 ${syncingId === conn.id ? "animate-spin" : ""}`} />
+                          Sync Latest
+                        </button>
+                        <button
+                          onClick={() => handleSyncConnection(conn.id, true)}
+                          disabled={syncingId === conn.id}
+                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
+                          title="Scan full recent history (still respects deleted/ignored positions)"
+                        >
+                          Full Scan
                         </button>
                         <button
                           onClick={() => handleDeleteConnection(conn.id)}
-                          className="p-1 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-slate-800 transition-colors"
                           title="Remove connection"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
+
+                    {/* Per-Connection Sync Controls: Target Account, Sync From Date, Auto-Sync Toggle */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-800/80 text-xs">
+                      <div>
+                        <label className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1 mb-1">
+                          <Layers className="w-3 h-3 text-sky-400" /> Default Target Account
+                        </label>
+                        <select
+                          value={conn.account_id || "acc_default"}
+                          onChange={(e) =>
+                            handleUpdateConnection(conn.id, { account_id: e.target.value })
+                          }
+                          className="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                        >
+                          {accounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1 mb-1">
+                          <Calendar className="w-3 h-3 text-amber-400" /> Only Import After Date
+                        </label>
+                        <input
+                          type="date"
+                          value={conn.sync_from_date ? conn.sync_from_date.split("T")[0] : ""}
+                          onChange={(e) =>
+                            handleUpdateConnection(conn.id, {
+                              sync_from_date: e.target.value
+                                ? new Date(e.target.value).toISOString()
+                                : null,
+                            })
+                          }
+                          className="w-full rounded-lg bg-slate-900 border border-slate-700 px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+
+                      <div className="flex flex-col justify-between">
+                        <span className="text-[10px] uppercase font-semibold text-slate-400 mb-1">
+                          Auto-Sync When Viewing
+                        </span>
+                        <label className="inline-flex items-center gap-2 cursor-pointer py-1">
+                          <input
+                            type="checkbox"
+                            checked={conn.auto_sync !== false}
+                            onChange={(e) =>
+                              handleUpdateConnection(conn.id, { auto_sync: e.target.checked })
+                            }
+                            className="rounded border-slate-600 bg-slate-900 text-sky-500 focus:ring-0"
+                          />
+                          <span className="text-xs text-slate-200">
+                            {conn.auto_sync !== false ? "Enabled (auto-fetches new positions)" : "Manual only"}
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 font-mono flex items-center justify-between pt-1">
+                      <span>
+                        Last synced:{" "}
+                        {conn.last_synced_at
+                          ? new Date(conn.last_synced_at).toLocaleString()
+                          : "Never"}
+                      </span>
+                      {conn.last_synced_trade_time && (
+                        <span>
+                          Latest position: {new Date(conn.last_synced_trade_time).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ))}
+
+                {/* Ignored Deleted Positions Indicator */}
+                {ignoredCount > 0 && (
+                  <div className="p-3 rounded-xl bg-slate-900/70 border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-400">
+                      <strong className="text-slate-200">{ignoredCount}</strong> deleted position(s) are permanently excluded and will never be re-imported on future syncs.
+                    </span>
+                    <button
+                      onClick={handleClearIgnored}
+                      className="text-xs text-slate-400 hover:text-sky-400 flex items-center gap-1 self-start sm:self-auto"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Reset Exclusion List
+                    </button>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="p-4 rounded-xl border border-dashed border-slate-800 text-xs text-slate-400 text-center">
-                No exchange API keys connected yet. Add your read-only Binance or Bybit keys below to start auto-syncing.
+                No exchange API keys connected yet. Add your read-only Binance or Bybit keys below to start auto-syncing consolidated positions.
               </div>
             )}
 
@@ -364,11 +542,10 @@ export default function SettingsPage() {
                 </span>
               </div>
 
-              {/* Security Hint */}
               <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-xs text-slate-300 flex items-start gap-2.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                 <div className="leading-relaxed text-[11px] text-slate-400">
-                  <strong className="text-slate-200">Security Recommendation:</strong> In your Binance or Bybit API settings, enable <strong>Read-Only</strong> permissions only. Do <strong>NOT</strong> enable withdrawals or trading execution permissions.
+                  <strong className="text-slate-200">Security Recommendation:</strong> Enable <strong>Read-Only</strong> permissions only. Do <strong>NOT</strong> enable withdrawals or trading execution permissions.
                 </div>
               </div>
 
@@ -414,6 +591,50 @@ export default function SettingsPage() {
                       onChange={(e) => setLabel(e.target.value)}
                       className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
                     />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      Import Into Account
+                    </label>
+                    <select
+                      value={targetAccountId}
+                      onChange={(e) => setTargetAccountId(e.target.value)}
+                      className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
+                    >
+                      {accounts.map((acc) => (
+                        <option key={acc.id} value={acc.id}>
+                          {acc.name}
+                        </option>
+                      ))}
+                      {accounts.length === 0 && <option value="acc_default">Main Account</option>}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      Only Sync After Date (Optional)
+                    </label>
+                    <input
+                      type="date"
+                      value={syncFromDate}
+                      onChange={(e) => setSyncFromDate(e.target.value)}
+                      className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+
+                  <div className="flex items-end pb-1.5">
+                    <label className="inline-flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={autoSync}
+                        onChange={(e) => setAutoSync(e.target.checked)}
+                        className="rounded border-slate-600 bg-slate-900 text-sky-500"
+                      />
+                      Auto-sync latest positions on page load
+                    </label>
                   </div>
                 </div>
 
@@ -493,10 +714,10 @@ export default function SettingsPage() {
             <div className="border-b border-slate-800 pb-3">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-sky-400" />
-                Account Capital & Risk Parameters
+                Global Capital & Risk Parameters
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Controls the living account balance baseline, drawdown telemetry, and lot size calculations.
+                Baseline starting capital for the Combined "All Accounts" view and default risk calculator parameters.
               </p>
             </div>
 
@@ -517,9 +738,6 @@ export default function SettingsPage() {
                       }
                       className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-sky-500"
                     />
-                    <span className="text-[10px] text-slate-500 mt-0.5 block">
-                      Account balance before logged trades
-                    </span>
                   </div>
 
                   <div>
@@ -545,18 +763,16 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       step="0.5"
-                      value={settings.max_drawdown_limit_pct ?? 10}
+                      value={settings.max_drawdown_limit_pct ?? settings.max_drawdown_limit ?? 10}
                       onChange={(e) =>
                         setSettings({
                           ...settings,
                           max_drawdown_limit_pct: parseFloat(e.target.value) || 0,
+                          max_drawdown_limit: parseFloat(e.target.value) || 0,
                         })
                       }
                       className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-sky-500"
                     />
-                    <span className="text-[10px] text-slate-500 mt-0.5 block">
-                      Prop firm challenge limit (e.g. 5% or 10%)
-                    </span>
                   </div>
 
                   <div>
@@ -566,18 +782,16 @@ export default function SettingsPage() {
                     <input
                       type="number"
                       step="0.1"
-                      value={settings.risk_per_trade_pct ?? 1.0}
+                      value={settings.risk_per_trade_pct ?? settings.risk_percentage ?? 1.0}
                       onChange={(e) =>
                         setSettings({
                           ...settings,
                           risk_per_trade_pct: parseFloat(e.target.value) || 0,
+                          risk_percentage: parseFloat(e.target.value) || 0,
                         })
                       }
                       className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-sky-500"
                     />
-                    <span className="text-[10px] text-slate-500 mt-0.5 block">
-                      Recommended risk per setup
-                    </span>
                   </div>
                 </div>
 
@@ -616,7 +830,7 @@ export default function SettingsPage() {
                 Data Backup & CSV / Excel Export
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Download your trade journal for tax calculations, Excel spreadsheets, or full JSON database backups.
+                Includes Gross P&L, Trading Fees, Funding Fees, Net P&L, and Account assignment.
               </p>
             </div>
 
@@ -625,10 +839,10 @@ export default function SettingsPage() {
                 <div>
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
                     <Download className="w-4 h-4 text-emerald-400" />
-                    Export Trades to CSV / Excel
+                    Export Positions to CSV / Excel
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Download a clean CSV spreadsheet with all symbols, dates, realized P&L, signal attribution, prices, and autopsy notes.
+                    Clean spreadsheet with account names, Gross P&L, Trading Fees, Funding Fees, Net P&L, prices, and notes.
                   </p>
                 </div>
 
@@ -638,7 +852,7 @@ export default function SettingsPage() {
                   className="w-full py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-colors flex items-center justify-center gap-2"
                 >
                   <Download className="w-3.5 h-3.5" />
-                  Download trades.csv
+                  Download positions.csv
                 </button>
               </div>
 
@@ -649,7 +863,7 @@ export default function SettingsPage() {
                     Full System JSON Backup
                   </h3>
                   <p className="text-xs text-slate-400 mt-1">
-                    Complete backup dump including trades, cashflow ledger, active goals, and exchange configuration.
+                    Complete backup dump including accounts, positions, cashflow ledger, goals, and settings.
                   </p>
                 </div>
 

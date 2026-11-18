@@ -5,6 +5,7 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 const TradeUpdateSchema = z.object({
+  account_id: z.string().optional(),
   symbol: z.string().max(32).optional(),
   market: z.enum(["FOREX", "CRYPTO", "COMMODITY", "INDEX", "STOCKS"]).optional(),
   direction: z.enum(["LONG", "SHORT"]).optional(),
@@ -14,6 +15,9 @@ const TradeUpdateSchema = z.object({
   take_profit: z.coerce.number().optional().nullable(),
   quantity: z.coerce.number().optional(),
   pnl: z.coerce.number().optional(),
+  gross_pnl: z.coerce.number().optional().nullable(),
+  trading_fee: z.coerce.number().optional().nullable(),
+  funding_fee: z.coerce.number().optional().nullable(),
   pnl_percentage: z.coerce.number().optional().nullable(),
   status: z.enum(["WON", "LOST", "BREAKEVEN", "OPEN"]).optional(),
   trade_date: z.string().optional(),
@@ -44,12 +48,12 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+async function handleUpdate(req: NextRequest, id: string) {
   try {
     const body = await req.json();
     const validated = TradeUpdateSchema.parse(body);
 
-    const updated = await updateTrade(params.id, validated);
+    const updated = await updateTrade(id, validated);
     if (!updated) {
       return NextResponse.json({ success: false, error: "Trade not found" }, { status: 404 });
     }
@@ -62,13 +66,24 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
+export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+  return handleUpdate(req, params.id);
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  return handleUpdate(req, params.id);
+}
+
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const deleted = await deleteTrade(params.id);
+    const deleted = await deleteTrade(params.id, true);
     if (!deleted) {
       return NextResponse.json({ success: false, error: "Trade not found" }, { status: 404 });
     }
-    return NextResponse.json({ success: true, message: "Trade deleted successfully" });
+    return NextResponse.json({
+      success: true,
+      message: "Position deleted and permanently excluded from future exchange syncs.",
+    });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }

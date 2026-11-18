@@ -5,6 +5,7 @@ export interface ExchangeSyncResult {
   success: boolean;
   exchange: string;
   importedTrades: number;
+  skippedIgnored?: number;
   importedCashflows: number;
   liveBalance?: number;
   message: string;
@@ -13,8 +14,35 @@ export interface ExchangeSyncResult {
   cashflows?: Partial<Cashflow>[];
 }
 
+interface RawFundingItem {
+  symbol: string;
+  amount: number; // signed: negative = paid, positive = received
+  time: number;
+  used: boolean;
+}
+
+interface ActivePositionAccumulator {
+  direction: "LONG" | "SHORT";
+  posSide: string;
+  openTime: number;
+  lastTime: number;
+  netQty: number;
+  entryNotional: number;
+  entryQty: number;
+  exitNotional: number;
+  exitQty: number;
+  grossPnl: number;
+  tradingFee: number;
+  fillCount: number;
+  lastOrderId: string;
+  lastTradeId: string;
+  hasOpenLeg: boolean;
+}
+
+const STABLE_ASSETS = new Set(["USDT", "USDC", "BUSD", "FDUSD", "USD", "TUSD", "USDP"]);
+
 // -----------------------------------------------------------------------------
-// BINANCE CLIENT
+// BINANCE CLIENT (Consolidated Closed Positions + Trading & Funding Fees)
 // -----------------------------------------------------------------------------
 export class BinanceClient {
   private apiKey: string;
@@ -31,106 +59,478 @@ export class BinanceClient {
     return crypto.createHmac("sha256", this.apiSecret).update(queryString).digest("hex");
   }
 
+  private async fetchFuturesSigned(path: string, params: Record<string, string | number | undefined> = {}) {
+    const queryParts: string[] = [];
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") {
+        queryParts.push(`${k}=${encodeURIComponent(String(v))}`);
+      }
+    }
+    queryParts.push(`timestamp=${Date.now()}`);
+    queryParts.push(`recvWindow=10000`);
+    const query = queryParts.join("&");
+    const signature = this.sign(query);
+
+    const res = await fetch(`${this.futuresBase}${path}?${query}&signature=${signature}`, {
+      headers: { "X-MBX-APIKEY": this.apiKey },
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ msg: res.statusText }));
+      throw new Error(err.msg || err.message || `Binance HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  private async getBnbPriceUsd(): Promise<number> {
+    try {
+      const res = await fetch(`${this.futuresBase}/fapi/v1/ticker/price?symbol=BNBUSDT`);
+      if (res.ok) {
+        const data = await res.json();
+        const price = parseFloat(data.price || "0");
+        if (price > 0) return price;
+      }
+    } catch {
+      // fallback
+    }
+    return 600;
+  }
+
+  private toUsdFee(amount: number, asset: string, bnbPrice: number): number {
+    const abs = Math.abs(amount);
+    if (abs === 0) return 0;
+    const upper = (asset || "USDT").toUpperCase();
+    if (STABLE_ASSETS.has(upper)) return abs;
+    if (upper === "BNB") return abs * bnbPrice;
+    return abs;
+  }
+
   // Test API credentials
   async testConnection(): Promise<{ success: boolean; message: string; balance?: number }> {
     try {
-      const timestamp = Date.now();
-      const query = `timestamp=${timestamp}&recvWindow=10000`;
-      const signature = this.sign(query);
-
-      const res = await fetch(`${this.futuresBase}/fapi/v2/account?${query}&signature=${signature}`, {
-        headers: { "X-MBX-APIKEY": this.apiKey },
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ msg: res.statusText }));
-        // Try spot if futures fails
-        const spotRes = await fetch(`${this.spotBase}/api/v3/account?${query}&signature=${signature}`, {
-          headers: { "X-MBX-APIKEY": this.apiKey },
-        });
-        if (!spotRes.ok) {
-          return { success: false, message: `Binance Error: ${err.msg || err.message || res.statusText}` };
-        }
-        const spotData = await spotRes.json();
-        return { success: true, message: "Connected to Binance Spot Account successfully" };
-      }
-
-      const data = await res.json();
+      const data = await this.fetchFuturesSigned("/fapi/v2/account");
       const totalMarginBalance = parseFloat(data.totalMarginBalance || data.totalWalletBalance || "0");
       return {
         success: true,
         message: `Connected to Binance Futures successfully! Wallet Equity: $${totalMarginBalance.toFixed(2)}`,
         balance: totalMarginBalance,
       };
-    } catch (err: any) {
-      return { success: false, message: `Network error connecting to Binance: ${err.message}` };
+    } catch (futErr: any) {
+      try {
+        const timestamp = Date.now();
+        const query = `timestamp=${timestamp}&recvWindow=10000`;
+        const signature = this.sign(query);
+        const spotRes = await fetch(`${this.spotBase}/api/v3/account?${query}&signature=${signature}`, {
+          headers: { "X-MBX-APIKEY": this.apiKey },
+        });
+        if (!spotRes.ok) {
+          return { success: false, message: `Binance Error: ${futErr.message}` };
+        }
+        return { success: true, message: "Connected to Binance Spot Account successfully" };
+      } catch (err: any) {
+        return { success: false, message: `Network error connecting to Binance: ${err.message}` };
+      }
     }
   }
 
-  // Fetch Realized PnL from Futures income history
-  async getFuturesRealizedTrades(limit = 100): Promise<Partial<Trade>[]> {
+  /**
+   * Reconstruct consolidated CLOSED POSITIONS from Binance Futures userTrades + income (funding fees).
+   * Combines all partial fills of a position into ONE single position record with:
+   * - True direction (LONG/SHORT)
+   * - Weighted average entry price & exit price
+   * - Total quantity
+   * - Gross P&L, Trading Fee, Funding Fee, and Net P&L
+   */
+  async getFuturesClosedPositions(sinceMs?: number): Promise<Partial<Trade>[]> {
     try {
-      const timestamp = Date.now();
-      const query = `incomeType=REALIZED_PNL&limit=${limit}&timestamp=${timestamp}&recvWindow=10000`;
-      const signature = this.sign(query);
-
-      const res = await fetch(`${this.futuresBase}/fapi/v1/income?${query}&signature=${signature}`, {
-        headers: { "X-MBX-APIKEY": this.apiKey },
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.msg || `Binance HTTP ${res.status}`);
+      // 1. Fetch currently open positions so we never prematurely emit a still-open position
+      const openPosMap = new Map<string, number>();
+      try {
+        const posRisks: any[] = await this.fetchFuturesSigned("/fapi/v2/positionRisk");
+        for (const pr of posRisks) {
+          const amt = Math.abs(parseFloat(pr.positionAmt || "0"));
+          if (amt > 0) {
+            const sym = String(pr.symbol).toUpperCase();
+            const ps = String(pr.positionSide || "BOTH").toUpperCase();
+            openPosMap.set(`${sym}_${ps}`, amt);
+          }
+        }
+      } catch (e) {
+        console.warn("[Binance] positionRisk check failed, continuing:", e);
       }
 
-      const incomeItems: any[] = await res.json();
-      const trades: Partial<Trade>[] = [];
+      // 2. Fetch income records (REALIZED_PNL, COMMISSION, FUNDING_FEE) to discover active symbols & funding fees
+      const incomeParams: Record<string, string | number | undefined> = { limit: 1000 };
+      if (sinceMs && sinceMs > 0) {
+        // Look back 7 days before sinceMs to capture funding fees for positions opened earlier
+        incomeParams.startTime = Math.max(0, sinceMs - 7 * 24 * 60 * 60 * 1000);
+      }
+
+      const incomeItems: any[] = await this.fetchFuturesSigned("/fapi/v1/income", incomeParams);
+
+      const activeSymbols = new Set<string>();
+      const fundingBySymbol = new Map<string, RawFundingItem[]>();
+      let needsBnbPrice = false;
 
       for (const item of incomeItems) {
-        const pnl = parseFloat(item.income);
-        const tradeDate = new Date(Number(item.time)).toISOString();
-        const tranId = String(item.tranId);
-        const symbol = String(item.symbol || "USDT").toUpperCase();
+        const sym = String(item.symbol || "").toUpperCase();
+        if (!sym) continue;
+        const type = String(item.incomeType || "").toUpperCase();
+        const asset = String(item.asset || "USDT").toUpperCase();
+        if (asset === "BNB") needsBnbPrice = true;
 
-        trades.push({
-          symbol,
-          market: "CRYPTO",
-          direction: pnl >= 0 ? "LONG" : "SHORT",
-          pnl: Number(pnl.toFixed(4)),
-          status: pnl > 0 ? "WON" : pnl < 0 ? "LOST" : "BREAKEVEN",
-          trade_date: tradeDate,
-          exchange: "BINANCE",
-          exchange_trade_id: `binance_fut_${tranId}`,
-          strategy: "Exchange Auto-Sync",
-          signal_provider: "Self",
-          reason_entry: `Auto-synced from Binance Futures. TranID: ${tranId}`,
-          reason_outcome: pnl >= 0 ? `Realized profit of +$${pnl.toFixed(2)} on Binance` : `Realized loss of -$${Math.abs(pnl).toFixed(2)} on Binance`,
-        });
+        if (type === "REALIZED_PNL") {
+          activeSymbols.add(sym);
+        } else if (type === "FUNDING_FEE") {
+          const arr = fundingBySymbol.get(sym) || [];
+          arr.push({
+            symbol: sym,
+            amount: parseFloat(item.income || "0"),
+            time: Number(item.time),
+            used: false,
+          });
+          fundingBySymbol.set(sym, arr);
+        }
       }
 
-      return trades;
+      if (activeSymbols.size === 0) {
+        return [];
+      }
+
+      const bnbPrice = needsBnbPrice ? await this.getBnbPriceUsd() : 600;
+      const symbolList = Array.from(activeSymbols);
+      const positions: Partial<Trade>[] = [];
+
+      // 3. Process symbols in batches of 5 to respect Binance rate limits
+      for (let i = 0; i < symbolList.length; i += 5) {
+        const batch = symbolList.slice(i, i + 5);
+        const batchResults = await Promise.all(
+          batch.map((sym) =>
+            this.reconstructSymbolPositions(sym, fundingBySymbol.get(sym) || [], openPosMap, bnbPrice, sinceMs)
+          )
+        );
+        for (const list of batchResults) {
+          positions.push(...list);
+        }
+      }
+
+      // Sort newest closed first
+      positions.sort((a, b) => {
+        const ta = new Date(a.trade_date || 0).getTime();
+        const tb = new Date(b.trade_date || 0).getTime();
+        return tb - ta;
+      });
+
+      return positions;
     } catch (err: any) {
-      console.error("[Binance] Error fetching futures trades:", err);
+      console.error("[Binance] Error reconstructing futures positions:", err);
       return [];
     }
+  }
+
+  private async reconstructSymbolPositions(
+    symbol: string,
+    fundingItems: RawFundingItem[],
+    openPosMap: Map<string, number>,
+    bnbPrice: number,
+    sinceMs?: number
+  ): Promise<Partial<Trade>[]> {
+    let rawFills: any[] = [];
+    try {
+      rawFills = await this.fetchFuturesSigned("/fapi/v1/userTrades", {
+        symbol,
+        limit: 500,
+      });
+    } catch (err) {
+      console.warn(`[Binance] Failed to fetch userTrades for ${symbol}:`, err);
+      return [];
+    }
+
+    if (!Array.isArray(rawFills) || rawFills.length === 0) return [];
+
+    // Sort chronologically ASC
+    rawFills.sort((a, b) => Number(a.time) - Number(b.time) || Number(a.id) - Number(b.id));
+
+    // Group by positionSide (BOTH in One-Way mode, LONG / SHORT in Hedge mode)
+    const byPosSide = new Map<string, any[]>();
+    for (const fill of rawFills) {
+      const ps = String(fill.positionSide || "BOTH").toUpperCase();
+      const arr = byPosSide.get(ps) || [];
+      arr.push(fill);
+      byPosSide.set(ps, arr);
+    }
+
+    const emitted: Partial<Trade>[] = [];
+
+    const finalizePosition = (acc: ActivePositionAccumulator) => {
+      // Only emit if we actually had closing fills / realized PnL
+      if (acc.exitQty <= 0 && acc.grossPnl === 0) return;
+
+      // Filter by incremental cutoff if provided
+      if (sinceMs && acc.lastTime <= sinceMs) return;
+
+      // Attach funding fees within [openTime - 60s, closeTime + 60s]
+      let fundingSum = 0;
+      const windowStart = acc.hasOpenLeg ? acc.openTime - 60_000 : acc.lastTime - 8 * 3600_000;
+      const windowEnd = acc.lastTime + 60_000;
+      for (const fi of fundingItems) {
+        if (!fi.used && fi.time >= windowStart && fi.time <= windowEnd) {
+          fundingSum += fi.amount;
+          fi.used = true;
+        }
+      }
+
+      const grossPnl = Number(acc.grossPnl.toFixed(4));
+      const tradingFee = Number(Math.abs(acc.tradingFee).toFixed(4));
+      const fundingFee = Number(fundingSum.toFixed(4));
+      // Net PnL = Gross Realized PnL - Trading Fee + Funding Fee (fundingFee is negative if paid, positive if earned)
+      const netPnl = Number((grossPnl - tradingFee + fundingFee).toFixed(4));
+
+      const entryPrice = acc.entryQty > 0 ? Number((acc.entryNotional / acc.entryQty).toFixed(6)) : null;
+      const exitPrice = acc.exitQty > 0 ? Number((acc.exitNotional / acc.exitQty).toFixed(6)) : null;
+      const quantity = Number(Math.max(acc.exitQty, acc.entryQty).toFixed(6));
+
+      const closeIso = new Date(acc.lastTime).toISOString();
+      const posId = `binance_pos_${symbol}_${acc.posSide}_${acc.lastTime}`;
+
+      const feeSummary = [
+        `Gross: ${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(2)}`,
+        `Trading Fee: -$${tradingFee.toFixed(2)}`,
+        fundingFee !== 0 ? `Funding: ${fundingFee >= 0 ? "+" : ""}$${fundingFee.toFixed(2)}` : null,
+        `Fills: ${acc.fillCount}`,
+      ]
+        .filter(Boolean)
+        .join(" | ");
+
+      emitted.push({
+        symbol,
+        market: "CRYPTO",
+        direction: acc.direction,
+        entry_price: entryPrice,
+        exit_price: exitPrice,
+        quantity,
+        gross_pnl: grossPnl,
+        trading_fee: tradingFee,
+        funding_fee: fundingFee,
+        pnl: netPnl,
+        status: netPnl > 0 ? "WON" : netPnl < 0 ? "LOST" : "BREAKEVEN",
+        trade_date: closeIso,
+        closed_date: closeIso,
+        exchange: "BINANCE",
+        exchange_trade_id: posId,
+        strategy: "Exchange Auto-Sync",
+        signal_provider: "Self",
+        reason_entry: `Consolidated Binance Futures ${acc.direction} position (${acc.fillCount} fills).`,
+        reason_outcome: feeSummary,
+      });
+    };
+
+    for (const [posSide, fills] of Array.from(byPosSide.entries())) {
+      let active: ActivePositionAccumulator | null = null;
+      let orphanClose: ActivePositionAccumulator | null = null;
+
+      for (const f of fills) {
+        const qty = Math.abs(parseFloat(f.qty || "0"));
+        const price = parseFloat(f.price || "0");
+        const rpnl = parseFloat(f.realizedPnl || "0");
+        const commUsd = this.toUsdFee(
+          parseFloat(f.commission || "0"),
+          String(f.commissionAsset || "USDT"),
+          bnbPrice
+        );
+        const side = String(f.side || "BUY").toUpperCase();
+        const time = Number(f.time);
+        const orderId = String(f.orderId || "");
+        const tradeId = String(f.id || "");
+
+        if (qty <= 0) continue;
+
+        // Determine whether this fill is opening or closing
+        let isOpening = false;
+        if (posSide === "LONG") {
+          isOpening = side === "BUY";
+        } else if (posSide === "SHORT") {
+          isOpening = side === "SELL";
+        } else {
+          // One-Way Mode (BOTH)
+          if (Math.abs(rpnl) > 1e-10) {
+            isOpening = false;
+          } else if (!active) {
+            isOpening = true;
+          } else {
+            isOpening =
+              (active.direction === "LONG" && side === "BUY") ||
+              (active.direction === "SHORT" && side === "SELL");
+          }
+        }
+
+        // Flush orphan closing cluster if a new opening or >5 min gap arrives
+        if (orphanClose && (isOpening || time - orphanClose.lastTime > 5 * 60_000)) {
+          finalizePosition(orphanClose);
+          orphanClose = null;
+        }
+
+        if (isOpening) {
+          const dir: "LONG" | "SHORT" =
+            posSide === "LONG" ? "LONG" : posSide === "SHORT" ? "SHORT" : side === "BUY" ? "LONG" : "SHORT";
+
+          if (!active) {
+            active = {
+              direction: dir,
+              posSide,
+              openTime: time,
+              lastTime: time,
+              netQty: qty,
+              entryNotional: price * qty,
+              entryQty: qty,
+              exitNotional: 0,
+              exitQty: 0,
+              grossPnl: 0,
+              tradingFee: commUsd,
+              fillCount: 1,
+              lastOrderId: orderId,
+              lastTradeId: tradeId,
+              hasOpenLeg: true,
+            };
+          } else {
+            active.netQty += qty;
+            active.entryNotional += price * qty;
+            active.entryQty += qty;
+            active.tradingFee += commUsd;
+            active.fillCount += 1;
+            active.lastTime = time;
+            active.lastOrderId = orderId;
+            active.lastTradeId = tradeId;
+          }
+        } else {
+          // Closing fill
+          if (!active) {
+            // Opening fill was outside the 500-trade window -> cluster consecutive closing fills into 1 position
+            const inferredDir: "LONG" | "SHORT" =
+              posSide === "LONG" ? "LONG" : posSide === "SHORT" ? "SHORT" : side === "SELL" ? "LONG" : "SHORT";
+
+            if (orphanClose && orphanClose.direction !== inferredDir) {
+              finalizePosition(orphanClose);
+              orphanClose = null;
+            }
+
+            if (!orphanClose) {
+              orphanClose = {
+                direction: inferredDir,
+                posSide,
+                openTime: time,
+                lastTime: time,
+                netQty: 0,
+                entryNotional: 0,
+                entryQty: 0,
+                exitNotional: price * qty,
+                exitQty: qty,
+                grossPnl: rpnl,
+                tradingFee: commUsd,
+                fillCount: 1,
+                lastOrderId: orderId,
+                lastTradeId: tradeId,
+                hasOpenLeg: false,
+              };
+            } else {
+              orphanClose.exitNotional += price * qty;
+              orphanClose.exitQty += qty;
+              orphanClose.grossPnl += rpnl;
+              orphanClose.tradingFee += commUsd;
+              orphanClose.fillCount += 1;
+              orphanClose.lastTime = time;
+              orphanClose.lastOrderId = orderId;
+              orphanClose.lastTradeId = tradeId;
+            }
+          } else if (posSide === "BOTH" && qty > active.netQty + 1e-6) {
+            // One-Way Mode Flip: closes current position and opens opposite position in the same fill
+            const closeQty: number = active.netQty;
+            const flipQty: number = qty - closeQty;
+            const closeRatio = closeQty / qty;
+            const flipRatio = flipQty / qty;
+
+            active.exitNotional += price * closeQty;
+            active.exitQty += closeQty;
+            active.grossPnl += rpnl;
+            active.tradingFee += commUsd * closeRatio;
+            active.fillCount += 1;
+            active.lastTime = time;
+            active.lastOrderId = orderId;
+            active.lastTradeId = tradeId;
+            active.netQty = 0;
+
+            finalizePosition(active);
+
+            // Start new flipped position
+            const newDir: "LONG" | "SHORT" = side === "BUY" ? "LONG" : "SHORT";
+            active = {
+              direction: newDir,
+              posSide,
+              openTime: time,
+              lastTime: time,
+              netQty: flipQty,
+              entryNotional: price * flipQty,
+              entryQty: flipQty,
+              exitNotional: 0,
+              exitQty: 0,
+              grossPnl: 0,
+              tradingFee: commUsd * flipRatio,
+              fillCount: 1,
+              lastOrderId: orderId,
+              lastTradeId: tradeId,
+              hasOpenLeg: true,
+            };
+          } else {
+            // Normal closing fill (partial or full)
+            active.exitNotional += price * qty;
+            active.exitQty += qty;
+            active.netQty = Math.max(0, active.netQty - qty);
+            active.grossPnl += rpnl;
+            active.tradingFee += commUsd;
+            active.fillCount += 1;
+            active.lastTime = time;
+            active.lastOrderId = orderId;
+            active.lastTradeId = tradeId;
+
+            // Check if position is now fully closed (allowing tiny floating-point dust)
+            const epsilon = Math.max(1e-6, active.entryQty * 0.0005);
+            if (active.netQty <= epsilon) {
+              finalizePosition(active);
+              active = null;
+            }
+          }
+        }
+      }
+
+      // Flush remaining orphan cluster
+      if (orphanClose) {
+        finalizePosition(orphanClose);
+        orphanClose = null;
+      }
+
+      // If there's a leftover active accumulator with realized closes AND Binance reports NO open position for this symbol,
+      // then the position is actually closed (e.g., partial history cutoff) -> finalize it!
+      if (active && active.exitQty > 0) {
+        const currentlyOpen = openPosMap.get(`${symbol}_${posSide}`) || 0;
+        if (currentlyOpen <= 1e-8) {
+          finalizePosition(active);
+        }
+      }
+    }
+
+    return emitted;
+  }
+
+  // Keep backwards-compatible alias
+  async getFuturesRealizedTrades(_limit = 100, sinceMs?: number): Promise<Partial<Trade>[]> {
+    return this.getFuturesClosedPositions(sinceMs);
   }
 
   // Fetch Live Balances
   async getBalance(): Promise<number> {
     try {
-      const timestamp = Date.now();
-      const query = `timestamp=${timestamp}&recvWindow=10000`;
-      const signature = this.sign(query);
-
-      const res = await fetch(`${this.futuresBase}/fapi/v2/account?${query}&signature=${signature}`, {
-        headers: { "X-MBX-APIKEY": this.apiKey },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        return parseFloat(data.totalMarginBalance || data.totalWalletBalance || "0");
-      }
-      return 0;
+      const data = await this.fetchFuturesSigned("/fapi/v2/account");
+      return parseFloat(data.totalMarginBalance || data.totalWalletBalance || "0");
     } catch {
       return 0;
     }
@@ -138,7 +538,7 @@ export class BinanceClient {
 }
 
 // -----------------------------------------------------------------------------
-// BYBIT CLIENT (v5 API)
+// BYBIT CLIENT (v5 API - Closed Positions + Fee Calculation)
 // -----------------------------------------------------------------------------
 export class BybitClient {
   private apiKey: string;
@@ -156,36 +556,26 @@ export class BybitClient {
     return crypto.createHmac("sha256", this.apiSecret).update(signString).digest("hex");
   }
 
+  private async fetchBybitSigned(path: string, queryString: string) {
+    const timestamp = String(Date.now());
+    const signature = this.sign(timestamp, queryString);
+
+    const res = await fetch(`${this.baseUrl}${path}?${queryString}`, {
+      headers: {
+        "X-BAPI-API-KEY": this.apiKey,
+        "X-BAPI-TIMESTAMP": timestamp,
+        "X-BAPI-RECV-WINDOW": "10000",
+        "X-BAPI-SIGN": signature,
+      },
+    });
+    return res.json();
+  }
+
   async testConnection(): Promise<{ success: boolean; message: string; balance?: number }> {
     try {
-      const timestamp = String(Date.now());
-      const queryString = "accountType=UNIFIED";
-      const signature = this.sign(timestamp, queryString);
-
-      const res = await fetch(`${this.baseUrl}/v5/account/wallet-balance?${queryString}`, {
-        headers: {
-          "X-BAPI-API-KEY": this.apiKey,
-          "X-BAPI-TIMESTAMP": timestamp,
-          "X-BAPI-RECV-WINDOW": "10000",
-          "X-BAPI-SIGN": signature,
-        },
-      });
-
-      const data = await res.json();
+      const data = await this.fetchBybitSigned("/v5/account/wallet-balance", "accountType=UNIFIED");
       if (data.retCode !== 0) {
-        // Try CONTRACT account type if unified is not enabled
-        const tsContract = String(Date.now());
-        const qsContract = "accountType=CONTRACT";
-        const sigContract = this.sign(tsContract, qsContract);
-        const resContract = await fetch(`${this.baseUrl}/v5/account/wallet-balance?${qsContract}`, {
-          headers: {
-            "X-BAPI-API-KEY": this.apiKey,
-            "X-BAPI-TIMESTAMP": tsContract,
-            "X-BAPI-RECV-WINDOW": "10000",
-            "X-BAPI-SIGN": sigContract,
-          },
-        });
-        const dataContract = await resContract.json();
+        const dataContract = await this.fetchBybitSigned("/v5/account/wallet-balance", "accountType=CONTRACT");
         if (dataContract.retCode !== 0) {
           return { success: false, message: `Bybit Error: ${data.retMsg || "Invalid credentials"}` };
         }
@@ -206,55 +596,111 @@ export class BybitClient {
     }
   }
 
-  // Fetch Closed PnL
-  async getClosedPnL(limit = 100): Promise<Partial<Trade>[]> {
+  // Fetch Consolidated Closed Positions with Fees
+  async getClosedPnL(limit = 100, sinceMs?: number): Promise<Partial<Trade>[]> {
     try {
-      const timestamp = String(Date.now());
-      const queryString = `category=linear&limit=${limit}`;
-      const signature = this.sign(timestamp, queryString);
+      let queryString = `category=linear&limit=${limit}`;
+      if (sinceMs && sinceMs > 0) {
+        queryString += `&startTime=${sinceMs}`;
+      }
 
-      const res = await fetch(`${this.baseUrl}/v5/position/closed-pnl?${queryString}`, {
-        headers: {
-          "X-BAPI-API-KEY": this.apiKey,
-          "X-BAPI-TIMESTAMP": timestamp,
-          "X-BAPI-RECV-WINDOW": "10000",
-          "X-BAPI-SIGN": signature,
-        },
-      });
-
-      const data = await res.json();
+      const data = await this.fetchBybitSigned("/v5/position/closed-pnl", queryString);
       if (data.retCode !== 0) {
         throw new Error(data.retMsg || `Bybit error code ${data.retCode}`);
+      }
+
+      // Also fetch recent funding/settlement logs to split funding fees accurately
+      const fundingBySymbol = new Map<string, RawFundingItem[]>();
+      try {
+        const txData = await this.fetchBybitSigned(
+          "/v5/account/transaction-log",
+          "accountType=UNIFIED&category=linear&type=SETTLEMENT&limit=50"
+        );
+        if (txData.retCode === 0 && Array.isArray(txData.result?.list)) {
+          for (const tx of txData.result.list) {
+            const sym = String(tx.symbol || "").toUpperCase();
+            if (!sym) continue;
+            const arr = fundingBySymbol.get(sym) || [];
+            arr.push({
+              symbol: sym,
+              amount: parseFloat(tx.funding || tx.change || "0"),
+              time: Number(tx.transactionTime || 0),
+              used: false,
+            });
+            fundingBySymbol.set(sym, arr);
+          }
+        }
+      } catch {
+        // optional funding detail
       }
 
       const list: any[] = data.result?.list || [];
       const trades: Partial<Trade>[] = [];
 
       for (const item of list) {
-        const pnl = parseFloat(item.closedPnl || "0");
+        const closeTime = Number(item.updatedTime || item.createdTime);
+        if (sinceMs && closeTime <= sinceMs) continue;
+
+        const netPnl = parseFloat(item.closedPnl || "0");
         const orderId = String(item.orderId || item.id);
-        const tradeDate = new Date(Number(item.updatedTime || item.createdTime)).toISOString();
-        const side = item.side === "Buy" ? "LONG" : "SHORT";
+        const symbol = String(item.symbol).toUpperCase();
+        const closeIso = new Date(closeTime).toISOString();
+        const openTime = Number(item.createdTime || closeTime);
+
+        // On Bybit closed-pnl, side is the CLOSING order side: Sell closes a LONG, Buy closes a SHORT
+        const direction: "LONG" | "SHORT" = item.side === "Sell" ? "LONG" : "SHORT";
         const entryPrice = parseFloat(item.avgEntryPrice || "0") || null;
         const exitPrice = parseFloat(item.avgExitPrice || "0") || null;
         const qty = parseFloat(item.qty || "1");
+        const cumEntryVal = parseFloat(item.cumEntryValue || "0");
+        const cumExitVal = parseFloat(item.cumExitValue || "0");
+
+        // Gross price PnL before fees
+        const grossPnl =
+          cumEntryVal > 0 && cumExitVal > 0
+            ? Number((direction === "LONG" ? cumExitVal - cumEntryVal : cumEntryVal - cumExitVal).toFixed(4))
+            : Number(netPnl.toFixed(4));
+
+        // Match funding fees
+        let fundingSum = 0;
+        const fList = fundingBySymbol.get(symbol) || [];
+        for (const fi of fList) {
+          if (!fi.used && fi.time >= openTime - 60_000 && fi.time <= closeTime + 60_000) {
+            fundingSum += fi.amount;
+            fi.used = true;
+          }
+        }
+        const fundingFee = Number(fundingSum.toFixed(4));
+        const impliedTradingFee = Number(Math.max(0, grossPnl + fundingFee - netPnl).toFixed(4));
+
+        const feeSummary = [
+          `Gross: ${grossPnl >= 0 ? "+" : ""}$${grossPnl.toFixed(2)}`,
+          `Trading Fee: -$${impliedTradingFee.toFixed(2)}`,
+          fundingFee !== 0 ? `Funding: ${fundingFee >= 0 ? "+" : ""}$${fundingFee.toFixed(2)}` : null,
+        ]
+          .filter(Boolean)
+          .join(" | ");
 
         trades.push({
-          symbol: String(item.symbol).toUpperCase(),
+          symbol,
           market: "CRYPTO",
-          direction: side,
+          direction,
           entry_price: entryPrice,
           exit_price: exitPrice,
           quantity: qty,
-          pnl: Number(pnl.toFixed(4)),
-          status: pnl > 0 ? "WON" : pnl < 0 ? "LOST" : "BREAKEVEN",
-          trade_date: tradeDate,
+          gross_pnl: grossPnl,
+          trading_fee: impliedTradingFee,
+          funding_fee: fundingFee,
+          pnl: Number(netPnl.toFixed(4)),
+          status: netPnl > 0 ? "WON" : netPnl < 0 ? "LOST" : "BREAKEVEN",
+          trade_date: closeIso,
+          closed_date: closeIso,
           exchange: "BYBIT",
-          exchange_trade_id: `bybit_${orderId}`,
+          exchange_trade_id: `bybit_pos_${symbol}_${orderId}`,
           strategy: "Exchange Auto-Sync",
           signal_provider: "Self",
-          reason_entry: `Auto-synced from Bybit Linear Perpetual. OrderID: ${orderId}`,
-          reason_outcome: pnl >= 0 ? `Realized profit of +$${pnl.toFixed(2)} on Bybit` : `Realized loss of -$${Math.abs(pnl).toFixed(2)} on Bybit`,
+          reason_entry: `Consolidated Bybit Linear ${direction} position. OrderID: ${orderId}`,
+          reason_outcome: feeSummary,
         });
       }
 
@@ -267,23 +713,9 @@ export class BybitClient {
 
   async getBalance(): Promise<number> {
     try {
-      const timestamp = String(Date.now());
-      const queryString = "accountType=UNIFIED";
-      const signature = this.sign(timestamp, queryString);
-
-      const res = await fetch(`${this.baseUrl}/v5/account/wallet-balance?${queryString}`, {
-        headers: {
-          "X-BAPI-API-KEY": this.apiKey,
-          "X-BAPI-TIMESTAMP": timestamp,
-          "X-BAPI-RECV-WINDOW": "10000",
-          "X-BAPI-SIGN": signature,
-        },
-      });
-
-      const data = await res.json();
+      const data = await this.fetchBybitSigned("/v5/account/wallet-balance", "accountType=UNIFIED");
       if (data.retCode === 0) {
-        const total = parseFloat(data.result?.list?.[0]?.totalEquity || "0");
-        return total;
+        return parseFloat(data.result?.list?.[0]?.totalEquity || "0");
       }
       return 0;
     } catch {

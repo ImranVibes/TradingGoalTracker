@@ -11,13 +11,14 @@ import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { GoalCard } from "@/components/goals/GoalCard";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal, DashboardStats } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import {
   TrendingUp,
   Percent,
   Wallet,
-  ShoppingBag,
+  Receipt,
   PlusCircle,
   ArrowRight,
   Calculator,
@@ -29,10 +30,23 @@ import {
   Landmark,
   Sliders,
   CheckCircle2,
+  Target,
+  RotateCcw,
+  Layers,
 } from "lucide-react";
 import Link from "next/link";
 
 export default function DashboardPage() {
+  const {
+    activeAccountId,
+    activeAccount,
+    accounts,
+    refreshAccounts,
+    triggerAutoSync,
+    autoSyncMessage,
+    dismissSyncMessage,
+  } = useAccounts();
+
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
@@ -49,9 +63,13 @@ export default function DashboardPage() {
 
   const fetchData = useCallback(async () => {
     try {
+      const accParam =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
       const [statsRes, tradesRes, goalsRes] = await Promise.all([
-        fetch("/api/stats").then((r) => r.json()),
-        fetch("/api/trades").then((r) => r.json()),
+        fetch(`/api/stats${accParam}`).then((r) => r.json()),
+        fetch(`/api/trades${accParam}`).then((r) => r.json()),
         fetch("/api/goals").then((r) => r.json()),
       ]);
 
@@ -61,11 +79,18 @@ export default function DashboardPage() {
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Auto-sync latest closed positions automatically in the background when visiting Dashboard
+  useEffect(() => {
+    triggerAutoSync(() => {
+      fetchData();
+    });
+  }, [triggerAutoSync, fetchData]);
 
   const handleSyncExchanges = async () => {
     setIsSyncing(true);
@@ -78,8 +103,8 @@ export default function DashboardPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setSyncMessage(`Sync complete: ${data.imported_trades || 0} trades imported.`);
-        await fetchData();
+        setSyncMessage(data.message || `Sync complete: ${data.imported_trades || 0} new position(s) imported.`);
+        await Promise.all([fetchData(), refreshAccounts()]);
       } else {
         setSyncMessage(data.error || "Exchange sync failed.");
       }
@@ -94,7 +119,7 @@ export default function DashboardPage() {
   const handleDeleteTrade = async (tradeId: string) => {
     try {
       await fetch(`/api/trades/${tradeId}`, { method: "DELETE" });
-      await fetchData();
+      await Promise.all([fetchData(), refreshAccounts()]);
     } catch (err) {
       console.error(err);
     }
@@ -109,11 +134,21 @@ export default function DashboardPage() {
     }
   };
 
-  const maxDd = stats?.drawdown?.max_drawdown_percent ?? 0;
-  const currentDd = stats?.drawdown?.current_drawdown_percent ?? 0;
-  const livingBalance = stats?.living_balance ?? stats?.net_pnl ?? 0;
-  const startingBalance = stats?.starting_balance ?? 10000;
-  const peakEquity = stats?.drawdown?.peak_balance ?? livingBalance;
+  const maxDd = stats?.drawdown?.max_drawdown_pct ?? 0;
+  const currentDd = stats?.drawdown?.current_drawdown_pct ?? 0;
+  const livingBalance = stats?.drawdown?.current_balance ?? stats?.living_balance ?? stats?.net_pnl ?? 0;
+  const startingBalance = stats?.drawdown?.starting_balance ?? stats?.starting_balance ?? 10000;
+  const peakEquity = stats?.drawdown?.peak_equity ?? livingBalance;
+
+  const activeGoalTarget =
+    activeAccount?.type === "RECOVERY"
+      ? activeAccount.initial_loss || activeAccount.target_amount || 0
+      : activeAccount?.target_amount || 0;
+  const activeNetPnl = stats?.net_pnl ?? 0;
+  const activeProgressPct =
+    activeGoalTarget > 0
+      ? Math.max(0, Math.min(100, Number(((activeNetPnl / activeGoalTarget) * 100).toFixed(1))))
+      : 0;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#090d16]">
@@ -137,11 +172,16 @@ export default function DashboardPage() {
           {/* Header & Quick Action */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
                 Trading Dashboard
+                {activeAccount && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 font-semibold">
+                    {activeAccount.name}
+                  </span>
+                )}
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Living balance, drawdown risk, exchange syncs, and signal provider analytics.
+                Living balance, consolidated positions, trading & funding fees, drawdown risk, and multi-account targets.
               </p>
             </div>
 
@@ -150,11 +190,19 @@ export default function DashboardPage() {
                 onClick={handleSyncExchanges}
                 disabled={isSyncing}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                title="Auto-sync trades & balances from Binance and Bybit"
+                title="Sync latest closed positions & fees from Binance and Bybit"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
-                {isSyncing ? "Syncing..." : "Sync Exchanges"}
+                {isSyncing ? "Syncing..." : "Sync Positions"}
               </button>
+
+              <Link
+                href="/accounts"
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors flex items-center gap-1.5"
+              >
+                <Layers className="w-3.5 h-3.5 text-amber-400" />
+                Accounts ({accounts.length})
+              </Link>
 
               <Link
                 href="/calculator"
@@ -172,21 +220,80 @@ export default function DashboardPage() {
                 className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all flex items-center gap-1.5"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                Log Trade
+                Log Position
               </button>
             </div>
           </div>
 
           {/* Sync Status Banner */}
-          {syncMessage && (
+          {(syncMessage || autoSyncMessage) && (
             <div className="p-3 rounded-xl bg-slate-900/90 border border-sky-500/30 text-xs text-sky-300 flex items-center justify-between">
               <span className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-sky-400" />
-                {syncMessage}
+                {syncMessage || autoSyncMessage}
               </span>
-              <button onClick={() => setSyncMessage(null)} className="text-slate-400 hover:text-white">
+              <button
+                onClick={() => {
+                  setSyncMessage(null);
+                  dismissSyncMessage();
+                }}
+                className="text-slate-400 hover:text-white"
+              >
                 ✕
               </button>
+            </div>
+          )}
+
+          {/* Active Account Target / Loss Recovery Progress Banner */}
+          {activeAccount && activeGoalTarget > 0 && (
+            <div
+              className={`rounded-2xl border p-4 space-y-2.5 ${
+                activeAccount.type === "RECOVERY"
+                  ? "bg-amber-500/10 border-amber-500/30"
+                  : "bg-emerald-500/10 border-emerald-500/30"
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  {activeAccount.type === "RECOVERY" ? (
+                    <RotateCcw className="w-4 h-4 text-amber-400" />
+                  ) : (
+                    <Target className="w-4 h-4 text-emerald-400" />
+                  )}
+                  <span className="text-sm font-bold text-white">{activeAccount.name}</span>
+                  <span className="text-[11px] text-slate-300">
+                    ({activeAccount.type === "RECOVERY" ? "Loss Recovery Account" : "Profit Target Account"})
+                  </span>
+                </div>
+                <div className="text-xs font-mono font-bold text-white">
+                  {formatCurrency(Math.max(0, activeNetPnl))} / {formatCurrency(activeGoalTarget)}{" "}
+                  <span className={activeAccount.type === "RECOVERY" ? "text-amber-300" : "text-emerald-300"}>
+                    ({activeProgressPct}%)
+                  </span>
+                </div>
+              </div>
+
+              <div className="w-full h-2.5 bg-slate-950/70 rounded-full overflow-hidden border border-slate-800">
+                <div
+                  className={`h-full rounded-full transition-all ${
+                    activeAccount.type === "RECOVERY" ? "bg-amber-500" : "bg-emerald-500"
+                  }`}
+                  style={{ width: `${activeProgressPct}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-slate-300 font-mono">
+                <span>
+                  {activeGoalTarget - activeNetPnl <= 0
+                    ? activeAccount.type === "RECOVERY"
+                      ? "Loss 100% Recovered!"
+                      : "Profit Target Hit!"
+                    : `${formatCurrency(Math.max(0, activeGoalTarget - activeNetPnl))} remaining`}
+                </span>
+                <Link href="/accounts" className="text-sky-400 hover:underline font-sans">
+                  Manage Accounts →
+                </Link>
+              </div>
             </div>
           )}
 
@@ -198,10 +305,10 @@ export default function DashboardPage() {
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                     <Activity className="w-3.5 h-3.5 text-sky-400" />
-                    Living Account Balance
+                    {activeAccount ? `${activeAccount.name} Balance` : "Living Account Balance"}
                   </span>
                   <Link
-                    href="/settings"
+                    href={activeAccount ? "/accounts" : "/settings"}
                     className="text-[10px] text-slate-500 hover:text-sky-400 flex items-center gap-1 transition-colors"
                     title="Configure starting balance & risk settings"
                   >
@@ -219,7 +326,7 @@ export default function DashboardPage() {
                   </span>
                   <span>•</span>
                   <span>
-                    Closed P&L:{" "}
+                    Net P&L:{" "}
                     <strong className={(stats?.net_pnl || 0) >= 0 ? "text-emerald-400" : "text-rose-400"}>
                       {formatCurrency(stats?.net_pnl || 0, true)}
                     </strong>
@@ -250,7 +357,7 @@ export default function DashboardPage() {
                     {maxDd.toFixed(2)}%
                   </div>
                   <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                    -${formatCurrency(stats?.drawdown?.max_drawdown_amount || 0).replace("$", "")} from peak
+                    -{formatCurrency(stats?.drawdown?.max_drawdown_amount || 0)} from peak
                   </div>
                 </div>
 
@@ -266,7 +373,9 @@ export default function DashboardPage() {
                     {currentDd.toFixed(2)}%
                   </div>
                   <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                    {currentDd === 0 ? "At Peak High" : `-$${formatCurrency(stats?.drawdown?.current_drawdown_amount || 0).replace("$", "")}`}
+                    {currentDd === 0
+                      ? "At Peak High"
+                      : `-${formatCurrency(stats?.drawdown?.current_drawdown_amount || 0)}`}
                   </div>
                 </div>
 
@@ -285,12 +394,12 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* 4 Primary Stat Cards */}
+          {/* 4 Primary Stat Cards (including Total Fees Paid!) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard
               label="Net Closed P&L"
               value={formatCurrency(stats?.net_pnl || 0, true)}
-              subValue={`+${formatCurrency(stats?.total_profit || 0)} / -${formatCurrency(stats?.total_loss || 0)}`}
+              subValue={`Gross: ${formatCurrency(stats?.gross_pnl ?? stats?.net_pnl ?? 0, true)}`}
               icon={<TrendingUp className="w-4 h-4" />}
               variant={(stats?.net_pnl || 0) >= 0 ? "profit" : "loss"}
             />
@@ -298,24 +407,24 @@ export default function DashboardPage() {
             <StatCard
               label="Win Rate"
               value={`${stats?.win_rate || 0}%`}
-              subValue={`${stats?.won_trades || 0} Won / ${stats?.total_trades || 0} Total Trades`}
+              subValue={`${stats?.won_trades || 0}W / ${stats?.lost_trades || 0}L • ${stats?.total_trades || 0} Positions`}
               icon={<Percent className="w-4 h-4" />}
               variant="brand"
             />
 
             <StatCard
-              label="Total Withdrawn"
-              value={formatCurrency(stats?.total_withdrawn || 0)}
-              subValue={`Net Extracted: ${formatCurrency(stats?.net_cash_extracted || 0)}`}
-              icon={<Wallet className="w-4 h-4" />}
+              label="Total Fees Paid"
+              value={formatCurrency(stats?.total_fees || 0)}
+              subValue={`Trading: -${formatCurrency(stats?.total_trading_fees || 0)} • Funding: ${formatCurrency(stats?.total_funding_fees || 0, true)}`}
+              icon={<Receipt className="w-4 h-4" />}
               variant="amber"
             />
 
             <StatCard
-              label="Total Spent"
-              value={formatCurrency(stats?.total_spent || 0)}
-              subValue="Living & expenses logged"
-              icon={<ShoppingBag className="w-4 h-4" />}
+              label="Withdrawn / Spent"
+              value={formatCurrency(stats?.total_withdrawn || 0)}
+              subValue={`Spent: ${formatCurrency(stats?.total_spent || 0)}`}
+              icon={<Wallet className="w-4 h-4" />}
               variant="neutral"
             />
           </div>
@@ -402,7 +511,7 @@ export default function DashboardPage() {
                   </div>
                   <div>
                     <h4 className="text-xs font-bold text-white">Exchange Platforms</h4>
-                    <p className="text-[11px] text-slate-400">P&L by broker / exchange source</p>
+                    <p className="text-[11px] text-slate-400">Net P&L by broker / exchange source</p>
                   </div>
                 </div>
 
@@ -416,26 +525,29 @@ export default function DashboardPage() {
 
               {stats?.exchange_distribution && stats.exchange_distribution.length > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                  {stats.exchange_distribution.map((ex) => (
-                    <div
-                      key={ex.exchange}
-                      className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs"
-                    >
-                      <div className="font-semibold text-slate-300 truncate uppercase tracking-wider text-[10px]">
-                        {ex.exchange}
-                      </div>
+                  {stats.exchange_distribution.map((ex) => {
+                    const exPnl = ex.pnl ?? ex.total_pnl ?? 0;
+                    return (
                       <div
-                        className={`font-mono font-bold text-sm mt-0.5 ${
-                          ex.total_pnl >= 0 ? "text-emerald-400" : "text-rose-400"
-                        }`}
+                        key={ex.exchange}
+                        className="p-2.5 rounded-xl bg-slate-900 border border-slate-800 text-xs"
                       >
-                        {formatCurrency(ex.total_pnl, true)}
+                        <div className="font-semibold text-slate-300 truncate uppercase tracking-wider text-[10px]">
+                          {ex.exchange}
+                        </div>
+                        <div
+                          className={`font-mono font-bold text-sm mt-0.5 ${
+                            exPnl >= 0 ? "text-emerald-400" : "text-rose-400"
+                          }`}
+                        >
+                          {formatCurrency(exPnl, true)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {ex.count} pos • {ex.win_rate}% win
+                        </div>
                       </div>
-                      <div className="text-[10px] text-slate-400 font-mono">
-                        {ex.count} trades • {ex.win_rate}% win
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="p-4 rounded-xl border border-dashed border-slate-800 text-center text-xs text-slate-500">
@@ -483,7 +595,7 @@ export default function DashboardPage() {
                         {formatCurrency(p.total_pnl, true)}
                       </div>
                       <div className="text-[10px] text-slate-400 font-mono">
-                        {p.count} trades • {p.win_rate}% win
+                        {p.total_trades} pos • {p.win_rate}% win
                       </div>
                     </div>
                   ))}
@@ -496,15 +608,15 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Recent Trades Table */}
+          {/* Recent Positions Table */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-white tracking-tight">Recent Trades</h3>
+              <h3 className="text-sm font-bold text-white tracking-tight">Recent Closed Positions</h3>
               <Link
                 href="/journal"
                 className="text-xs font-medium text-sky-400 hover:underline flex items-center gap-1"
               >
-                Full Journal ({trades.length}) <ArrowRight className="w-3.5 h-3.5" />
+                Full Positions Journal ({trades.length}) <ArrowRight className="w-3.5 h-3.5" />
               </Link>
             </div>
 
@@ -523,7 +635,10 @@ export default function DashboardPage() {
       <TradeFormModal
         isOpen={isTradeModalOpen}
         onClose={() => setIsTradeModalOpen(false)}
-        onSuccess={() => fetchData()}
+        onSuccess={() => {
+          fetchData();
+          refreshAccounts();
+        }}
         editTrade={editTrade}
       />
 

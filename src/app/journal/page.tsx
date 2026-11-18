@@ -8,6 +8,7 @@ import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { Badge } from "@/components/ui/Badge";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade } from "@/lib/types";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
 import {
@@ -23,14 +24,30 @@ import {
   User,
   Download,
   Calendar,
-  Landmark,
   Image as ImageIcon,
   RotateCcw,
+  RefreshCw,
+  CheckSquare,
+  Square,
+  Sparkles,
+  Layers,
+  Receipt,
+  CheckCircle2,
 } from "lucide-react";
 
 type DateRangeType = "ALL" | "TODAY" | "WEEK" | "MONTH" | "CUSTOM";
 
 export default function JournalPage() {
+  const {
+    accounts,
+    activeAccountId,
+    activeAccount,
+    refreshAccounts,
+    triggerAutoSync,
+    autoSyncMessage,
+    dismissSyncMessage,
+  } = useAccounts();
+
   const [trades, setTrades] = useState<Trade[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
@@ -41,6 +58,16 @@ export default function JournalPage() {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
 
+  // Selection for bulk delete (permanently excludes from future syncs)
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+
+  // Sync & Legacy cleanup state
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [isCleaningLegacy, setIsCleaningLegacy] = useState(false);
+  const [statusBanner, setStatusBanner] = useState<string | null>(null);
+
+  // Modals
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
@@ -49,30 +76,147 @@ export default function JournalPage() {
 
   const fetchTrades = useCallback(async () => {
     try {
-      const res = await fetch("/api/trades");
+      const qs =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
+      const res = await fetch(`/api/trades${qs}`);
       const data = await res.json();
       if (data.success) setTrades(data.trades);
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchTrades();
+    setSelectedIds([]);
   }, [fetchTrades]);
+
+  // Automatically fetch latest closed positions in the background when opening Journal
+  useEffect(() => {
+    triggerAutoSync(() => {
+      fetchTrades();
+    });
+  }, [triggerAutoSync, fetchTrades]);
+
+  const handleManualSync = async () => {
+    setIsSyncing(true);
+    setStatusBanner(null);
+    try {
+      const res = await fetch("/api/exchanges/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "sync" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusBanner(data.message || `Synced ${data.imported_trades || 0} new closed position(s).`);
+        await Promise.all([fetchTrades(), refreshAccounts()]);
+      } else {
+        setStatusBanner(data.error || "Sync failed.");
+      }
+    } catch (err: any) {
+      setStatusBanner(err.message || "Sync failed.");
+    } finally {
+      setIsSyncing(false);
+      setTimeout(() => setStatusBanner(null), 5000);
+    }
+  };
+
+  const handleCleanupLegacyFills = async () => {
+    if (
+      !confirm(
+        "This will remove your old raw partial-fill imports and re-import them cleanly as consolidated Closed Positions with Trading & Funding Fees. Continue?"
+      )
+    ) {
+      return;
+    }
+    setIsCleaningLegacy(true);
+    try {
+      const res = await fetch("/api/exchanges/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cleanup_legacy_fills" }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusBanner(data.message);
+        await Promise.all([fetchTrades(), refreshAccounts()]);
+      } else {
+        setStatusBanner(data.error || "Cleanup failed.");
+      }
+    } catch (err: any) {
+      setStatusBanner(err.message || "Cleanup failed.");
+    } finally {
+      setIsCleaningLegacy(false);
+    }
+  };
 
   const handleDeleteTrade = async (id: string) => {
     try {
       await fetch(`/api/trades/${id}`, { method: "DELETE" });
-      await fetchTrades();
+      setSelectedIds((prev) => prev.filter((x) => x !== id));
+      await Promise.all([fetchTrades(), refreshAccounts()]);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (
+      !confirm(
+        `Delete ${selectedIds.length} selected position(s)? Any exchange-synced positions deleted will be permanently ignored and NEVER re-imported on future syncs.`
+      )
+    ) {
+      return;
+    }
+    setIsBulkDeleting(true);
+    try {
+      const res = await fetch("/api/trades", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusBanner(data.message);
+        setSelectedIds([]);
+        await Promise.all([fetchTrades(), refreshAccounts()]);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsBulkDeleting(false);
+      setTimeout(() => setStatusBanner(null), 5000);
+    }
+  };
+
+  const handleMoveToAccount = async (tradeId: string, newAccountId: string) => {
+    try {
+      await fetch(`/api/trades/${tradeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account_id: newAccountId }),
+      });
+      await Promise.all([fetchTrades(), refreshAccounts()]);
     } catch (err) {
       console.error(err);
     }
   };
 
   const handleExport = (format: "csv" | "json") => {
-    window.open(`/api/export?format=${format}`, "_blank");
+    const accParam =
+      activeAccountId && activeAccountId !== "ALL"
+        ? `&account_id=${encodeURIComponent(activeAccountId)}`
+        : "";
+    window.open(`/api/export?format=${format}${accParam}`, "_blank");
   };
+
+  const legacyPartialFillCount = trades.filter(
+    (t) => t.exchange_trade_id && t.exchange_trade_id.startsWith("binance_fut_")
+  ).length;
 
   const knownProviders = Array.from(
     new Set(
@@ -110,10 +254,7 @@ export default function JournalPage() {
     }
 
     if (dateRange === "MONTH") {
-      return (
-        d.getFullYear() === now.getFullYear() &&
-        d.getMonth() === now.getMonth()
-      );
+      return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth();
     }
 
     if (dateRange === "CUSTOM") {
@@ -152,9 +293,29 @@ export default function JournalPage() {
     return true;
   });
 
-  const totalFilteredPnl = filtered.reduce((acc, t) => acc + (t.pnl || 0), 0);
+  const totalFilteredPnl = filtered.reduce((acc, t) => acc + Number(t.pnl || 0), 0);
+  const totalFilteredGross = filtered.reduce(
+    (acc, t) => acc + Number(t.gross_pnl ?? t.pnl ?? 0),
+    0
+  );
+  const totalTradingFees = filtered.reduce((acc, t) => acc + Math.abs(Number(t.trading_fee || 0)), 0);
+  const totalFundingFees = filtered.reduce((acc, t) => acc + Number(t.funding_fee || 0), 0);
   const winCount = filtered.filter((t) => t.status === "WON").length;
   const filteredWinRate = filtered.length > 0 ? Math.round((winCount / filtered.length) * 100) : 0;
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAllFiltered = () => {
+    if (selectedIds.length === filtered.length && filtered.length > 0) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filtered.map((t) => t.id));
+    }
+  };
 
   const getExchangeBadgeStyle = (exchange?: string) => {
     const ex = exchange?.toUpperCase();
@@ -195,23 +356,38 @@ export default function JournalPage() {
           {/* Header & Quick Actions */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-                Trading Journal
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                Positions Journal
+                {activeAccount && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 font-semibold">
+                    {activeAccount.name}
+                  </span>
+                )}
               </h1>
               <p className="text-xs text-slate-400 mt-0.5">
-                Review executions, autopsy notes, exchange syncs, and win rate reflections.
+                Consolidated closed positions, trading & funding fees, autopsy notes, and account assignment.
               </p>
             </div>
 
             <div className="flex items-center flex-wrap gap-2">
+              <button
+                onClick={handleManualSync}
+                disabled={isSyncing}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-sky-300 border border-slate-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                title="Fetch latest closed positions from connected exchanges"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                {isSyncing ? "Syncing..." : "Sync Latest Positions"}
+              </button>
+
               <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-0.5">
                 <button
                   onClick={() => handleExport("csv")}
                   className="px-2.5 py-1.5 text-xs text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition-colors flex items-center gap-1.5"
-                  title="Export filtered or all trades to Excel/CSV"
+                  title="Export positions & fees to CSV/Excel"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">Export</span> CSV
+                  CSV
                 </button>
                 <button
                   onClick={() => handleExport("json")}
@@ -219,7 +395,7 @@ export default function JournalPage() {
                   title="Download full JSON database backup"
                 >
                   <Download className="w-3.5 h-3.5 text-sky-400" />
-                  JSON Backup
+                  JSON
                 </button>
               </div>
 
@@ -231,48 +407,117 @@ export default function JournalPage() {
                 className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition-all flex items-center gap-1.5"
               >
                 <PlusCircle className="w-3.5 h-3.5" />
-                Log Trade
+                Log Position
               </button>
             </div>
           </div>
 
-          {/* Quick Metrics Bar for Filtered View */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {/* Auto-Sync / Action Status Notification */}
+          {(statusBanner || autoSyncMessage) && (
+            <div className="p-3 rounded-xl bg-slate-900 border border-sky-500/30 text-xs text-sky-300 flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-sky-400 flex-shrink-0" />
+                {statusBanner || autoSyncMessage}
+              </span>
+              <button
+                onClick={() => {
+                  setStatusBanner(null);
+                  dismissSyncMessage();
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* Upgrade Banner if Legacy Partial Fills Detected */}
+          {legacyPartialFillCount > 0 && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div className="text-xs">
+                  <div className="font-bold text-amber-200">
+                    Found {legacyPartialFillCount} old partial-fill trade rows from before Position Consolidation
+                  </div>
+                  <p className="text-amber-200/80 mt-0.5">
+                    Click once to automatically replace those split fills with clean consolidated Closed Positions (including accurate Entry/Exit, Trading Fees, and Funding Fees).
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleCleanupLegacyFills}
+                disabled={isCleaningLegacy}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors whitespace-nowrap disabled:opacity-50"
+              >
+                {isCleaningLegacy ? "Upgrading..." : "Clean Up & Re-Sync Positions"}
+              </button>
+            </div>
+          )}
+
+          {/* Quick Metrics Bar for Filtered View (including Fees!) */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
             <div className="p-3 rounded-xl bg-[#0f172a] border border-slate-800/90">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Filtered Trades</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                Positions
+              </span>
               <div className="text-base sm:text-lg font-black font-mono text-white mt-0.5">
-                {filtered.length} <span className="text-xs text-slate-500 font-normal">of {trades.length}</span>
+                {filtered.length}{" "}
+                <span className="text-xs text-slate-500 font-normal">({filteredWinRate}% win)</span>
               </div>
             </div>
+
             <div className="p-3 rounded-xl bg-[#0f172a] border border-slate-800/90">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Filtered Net P&L</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                Gross P&L
+              </span>
               <div
                 className={`text-base sm:text-lg font-black font-mono mt-0.5 ${
-                  totalFilteredPnl >= 0 ? "text-emerald-400" : "text-rose-400"
+                  totalFilteredGross >= 0 ? "text-emerald-400" : "text-rose-400"
                 }`}
               >
-                {formatCurrency(totalFilteredPnl, true)}
+                {formatCurrency(totalFilteredGross, true)}
               </div>
             </div>
+
             <div className="p-3 rounded-xl bg-[#0f172a] border border-slate-800/90">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Filtered Win Rate</span>
-              <div className="text-base sm:text-lg font-black font-mono text-white mt-0.5">
-                {filteredWinRate}% <span className="text-xs text-slate-500 font-normal">({winCount}W)</span>
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider flex items-center gap-1">
+                <Receipt className="w-3 h-3 text-amber-400" />
+                Trading Fees
+              </span>
+              <div className="text-base sm:text-lg font-black font-mono text-amber-300 mt-0.5">
+                -{formatCurrency(totalTradingFees)}
               </div>
             </div>
-            <div className="p-3 rounded-xl bg-[#0f172a] border border-slate-800/90 flex items-center justify-between">
+
+            <div className="p-3 rounded-xl bg-[#0f172a] border border-slate-800/90">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                Funding Fees
+              </span>
+              <div
+                className={`text-base sm:text-lg font-black font-mono mt-0.5 ${
+                  totalFundingFees < 0
+                    ? "text-rose-300"
+                    : totalFundingFees > 0
+                    ? "text-emerald-300"
+                    : "text-slate-300"
+                }`}
+              >
+                {formatCurrency(totalFundingFees, true)}
+              </div>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#0f172a] border border-slate-800/90 col-span-2 lg:col-span-1 flex items-center justify-between">
               <div>
-                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Timeframe</span>
-                <div className="text-xs sm:text-sm font-semibold text-sky-400 mt-0.5">
-                  {dateRange === "ALL"
-                    ? "All-Time"
-                    : dateRange === "TODAY"
-                    ? "Today"
-                    : dateRange === "WEEK"
-                    ? "Past 7 Days"
-                    : dateRange === "MONTH"
-                    ? "This Month"
-                    : "Custom Range"}
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                  Net P&L (After Fees)
+                </span>
+                <div
+                  className={`text-base sm:text-lg font-black font-mono mt-0.5 ${
+                    totalFilteredPnl >= 0 ? "text-emerald-400" : "text-rose-400"
+                  }`}
+                >
+                  {formatCurrency(totalFilteredPnl, true)}
                 </div>
               </div>
               {(statusFilter !== "ALL" ||
@@ -283,7 +528,7 @@ export default function JournalPage() {
                 search) && (
                 <button
                   onClick={resetFilters}
-                  className="text-xs text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1"
+                  className="text-xs text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
                   title="Reset all filters"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -294,7 +539,6 @@ export default function JournalPage() {
 
           {/* Date Filter & Control Bar */}
           <div className="p-3.5 rounded-2xl border border-slate-800 bg-[#0f172a] shadow-sm space-y-3">
-            {/* Top row: Search and Date Range Pills */}
             <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
               <div className="relative flex-1 max-w-md">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
@@ -307,7 +551,6 @@ export default function JournalPage() {
                 />
               </div>
 
-              {/* Date Range Selector */}
               <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 overflow-x-auto">
                 <Calendar className="w-3.5 h-3.5 text-slate-400 ml-1.5 mr-0.5 hidden sm:block" />
                 {(
@@ -334,7 +577,6 @@ export default function JournalPage() {
               </div>
             </div>
 
-            {/* Custom Date Range Picker if CUSTOM selected */}
             {dateRange === "CUSTOM" && (
               <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/80 text-xs">
                 <span className="text-slate-400 font-medium">Custom Range:</span>
@@ -354,92 +596,122 @@ export default function JournalPage() {
               </div>
             )}
 
-            {/* Bottom row: Multi-Dropdown Filters (Status, Market, Signal Source, Exchange) */}
-            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800/60">
-              {/* Status Pills */}
-              <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
-                {["ALL", "WON", "LOST", "BREAKEVEN"].map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => setStatusFilter(st)}
-                    className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
-                      statusFilter === st
-                        ? "bg-slate-800 text-white font-bold"
-                        : "text-slate-400 hover:text-white"
-                    }`}
-                  >
-                    {st}
-                  </button>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800/60">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                  {["ALL", "WON", "LOST", "BREAKEVEN"].map((st) => (
+                    <button
+                      key={st}
+                      onClick={() => setStatusFilter(st)}
+                      className={`text-xs px-2.5 py-1 rounded-lg font-medium transition-all ${
+                        statusFilter === st
+                          ? "bg-slate-800 text-white font-bold"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {st}
+                    </button>
+                  ))}
+                </div>
 
-              {/* Market Filter */}
-              <select
-                value={marketFilter}
-                onChange={(e) => setMarketFilter(e.target.value)}
-                className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
-              >
-                <option value="ALL">All Markets</option>
-                <option value="CRYPTO">Crypto</option>
-                <option value="FOREX">Forex</option>
-                <option value="COMMODITY">Gold & Commodities</option>
-                <option value="INDEX">Indices</option>
-              </select>
+                <select
+                  value={marketFilter}
+                  onChange={(e) => setMarketFilter(e.target.value)}
+                  className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none"
+                >
+                  <option value="ALL">All Markets</option>
+                  <option value="CRYPTO">Crypto</option>
+                  <option value="FOREX">Forex</option>
+                  <option value="COMMODITY">Gold & Commodities</option>
+                  <option value="INDEX">Indices</option>
+                </select>
 
-              {/* Signal Source Filter */}
-              <select
-                value={sourceFilter}
-                onChange={(e) => setSourceFilter(e.target.value)}
-                className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none font-medium"
-              >
-                <option value="ALL">All Sources (Self + Signals)</option>
-                <option value="SELF">👤 My Own Trades</option>
-                {knownProviders.map((p) => (
-                  <option key={p} value={p}>
-                    📡 {p}
-                  </option>
-                ))}
-              </select>
-
-              {/* Exchange Platform Filter */}
-              <select
-                value={exchangeFilter}
-                onChange={(e) => setExchangeFilter(e.target.value)}
-                className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none font-medium"
-              >
-                <option value="ALL">All Platforms & Exchanges</option>
-                <option value="BINANCE">Binance</option>
-                <option value="BYBIT">Bybit</option>
-                <option value="OKX">OKX</option>
-                <option value="METATRADER">MetaTrader (MT4/MT5)</option>
-                <option value="BITGET">Bitget</option>
-                <option value="WALLET">Web3 Wallet</option>
-                <option value="MANUAL">Manual / Paper</option>
-                {knownExchanges
-                  .filter(
-                    (ex) =>
-                      !["BINANCE", "BYBIT", "OKX", "METATRADER", "BITGET", "WALLET", "MANUAL"].includes(
-                        ex.toUpperCase()
-                      )
-                  )
-                  .map((ex) => (
-                    <option key={ex} value={ex}>
-                      {ex}
+                <select
+                  value={sourceFilter}
+                  onChange={(e) => setSourceFilter(e.target.value)}
+                  className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none font-medium"
+                >
+                  <option value="ALL">All Sources</option>
+                  <option value="SELF">👤 My Own Trades</option>
+                  {knownProviders.map((p) => (
+                    <option key={p} value={p}>
+                      📡 {p}
                     </option>
                   ))}
-              </select>
+                </select>
+
+                <select
+                  value={exchangeFilter}
+                  onChange={(e) => setExchangeFilter(e.target.value)}
+                  className="rounded-xl bg-slate-900 border border-slate-800 px-3 py-1.5 text-xs text-slate-300 focus:outline-none font-medium"
+                >
+                  <option value="ALL">All Exchanges</option>
+                  <option value="BINANCE">Binance</option>
+                  <option value="BYBIT">Bybit</option>
+                  <option value="OKX">OKX</option>
+                  <option value="METATRADER">MetaTrader</option>
+                  <option value="BITGET">Bitget</option>
+                  <option value="WALLET">Wallet</option>
+                  <option value="MANUAL">Manual</option>
+                  {knownExchanges
+                    .filter(
+                      (ex) =>
+                        !["BINANCE", "BYBIT", "OKX", "METATRADER", "BITGET", "WALLET", "MANUAL"].includes(
+                          ex.toUpperCase()
+                        )
+                    )
+                    .map((ex) => (
+                      <option key={ex} value={ex}>
+                        {ex}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* Bulk Selection Bar */}
+              {filtered.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={toggleSelectAllFiltered}
+                    className="px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800 flex items-center gap-1.5"
+                  >
+                    {selectedIds.length === filtered.length && filtered.length > 0 ? (
+                      <CheckSquare className="w-3.5 h-3.5 text-sky-400" />
+                    ) : (
+                      <Square className="w-3.5 h-3.5" />
+                    )}
+                    {selectedIds.length > 0 ? `${selectedIds.length} Selected` : "Select All"}
+                  </button>
+
+                  {selectedIds.length > 0 && (
+                    <button
+                      onClick={handleBulkDelete}
+                      disabled={isBulkDeleting}
+                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 flex items-center gap-1.5 disabled:opacity-50"
+                      title="Delete selected positions permanently (they will never be re-imported)"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      {isBulkDeleting
+                        ? "Deleting..."
+                        : `Delete ${selectedIds.length} (Won't Re-Import)`}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Trades Stream */}
+          {/* Positions Stream */}
           {filtered.length === 0 ? (
             <div className="p-12 text-center rounded-2xl border border-dashed border-slate-800 bg-slate-900/30 space-y-3">
               <BookOpen className="w-9 h-9 text-slate-600 mx-auto" />
-              <h3 className="text-sm font-semibold text-slate-300">No journal entries found</h3>
+              <h3 className="text-sm font-semibold text-slate-300">No positions found</h3>
               <p className="text-xs text-slate-500 max-w-sm mx-auto">
                 {trades.length === 0
-                  ? "Log your first trade or connect your exchange API in Settings to auto-import trades."
-                  : "No trades matched your active search or filters. Click below to reset filters or record a new trade."}
+                  ? activeAccount
+                    ? `No positions assigned to "${activeAccount.name}" yet. Log a trade or move an existing position into this account.`
+                    : "Log your first position or connect Binance/Bybit in Settings to auto-sync closed positions."
+                  : "No positions matched your active filters."}
               </p>
               <div className="flex items-center justify-center gap-2 pt-1">
                 {trades.length > 0 && (
@@ -457,7 +729,7 @@ export default function JournalPage() {
                   }}
                   className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-sky-500 hover:bg-sky-400 text-white transition-colors"
                 >
-                  + Log Trade
+                  + Log Position
                 </button>
               </div>
             </div>
@@ -466,6 +738,13 @@ export default function JournalPage() {
               {filtered.map((trade) => {
                 const isProfit = trade.pnl > 0;
                 const isLoss = trade.pnl < 0;
+                const isSelected = selectedIds.includes(trade.id);
+                const tFee = Math.abs(Number(trade.trading_fee || 0));
+                const fFee = Number(trade.funding_fee || 0);
+                const gPnl =
+                  trade.gross_pnl !== undefined && trade.gross_pnl !== null
+                    ? Number(trade.gross_pnl)
+                    : trade.pnl;
                 const rr = calculateRR(
                   trade.entry_price || 0,
                   trade.stop_loss,
@@ -476,11 +755,27 @@ export default function JournalPage() {
                 return (
                   <div
                     key={trade.id}
-                    className="rounded-xl border border-slate-800 bg-[#0f172a] p-4 hover:border-slate-700 transition-colors space-y-3"
+                    className={`rounded-xl border bg-[#0f172a] p-4 transition-colors space-y-3 ${
+                      isSelected
+                        ? "border-sky-500/60 bg-sky-500/5"
+                        : "border-slate-800 hover:border-slate-700"
+                    }`}
                   >
                     {/* Header */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/80">
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-start sm:items-center gap-2.5">
+                        <button
+                          onClick={() => toggleSelect(trade.id)}
+                          className="mt-1 sm:mt-0 text-slate-500 hover:text-sky-400 transition-colors"
+                          title="Select position for bulk delete"
+                        >
+                          {isSelected ? (
+                            <CheckSquare className="w-4 h-4 text-sky-400" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
+
                         <div
                           className={`p-1.5 rounded-lg ${
                             trade.direction === "LONG"
@@ -517,7 +812,6 @@ export default function JournalPage() {
                               {trade.status}
                             </Badge>
 
-                            {/* Exchange Badge */}
                             {trade.exchange && (
                               <span
                                 className={`text-[10px] px-2 py-0.5 rounded border font-semibold uppercase tracking-wider ${getExchangeBadgeStyle(
@@ -528,7 +822,6 @@ export default function JournalPage() {
                               </span>
                             )}
 
-                            {/* Signal Source Badge */}
                             {trade.signal_provider && trade.signal_provider.toLowerCase() !== "self" ? (
                               <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-500/15 text-violet-300 border border-violet-500/30 font-medium flex items-center gap-1">
                                 <Radio className="w-2.5 h-2.5 text-violet-400" />
@@ -544,12 +837,13 @@ export default function JournalPage() {
                             {trade.chart_image && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium flex items-center gap-1">
                                 <ImageIcon className="w-2.5 h-2.5" />
-                                Screenshot
+                                Chart
                               </span>
                             )}
                           </div>
                           <p className="text-[11px] text-slate-400 font-mono mt-0.5">
-                            {formatDate(trade.trade_date)} {trade.strategy ? `• ${trade.strategy}` : ""}
+                            {formatDate(trade.trade_date, true)}{" "}
+                            {trade.strategy ? `• ${trade.strategy}` : ""}
                           </p>
                         </div>
                       </div>
@@ -563,9 +857,22 @@ export default function JournalPage() {
                           >
                             {formatCurrency(trade.pnl, true)}
                           </div>
-                          {rr && (
-                            <div className="text-[10px] text-slate-400 font-mono">1:{rr} R:R</div>
-                          )}
+                          <div className="flex items-center sm:justify-end gap-2 text-[10px] font-mono text-slate-400">
+                            {(tFee > 0 || fFee !== 0) && (
+                              <>
+                                <span>Gross: {formatCurrency(gPnl, true)}</span>
+                                {tFee > 0 && (
+                                  <span className="text-amber-300">Fee: -{formatCurrency(tFee)}</span>
+                                )}
+                                {fFee !== 0 && (
+                                  <span className={fFee < 0 ? "text-rose-300" : "text-emerald-300"}>
+                                    Fund: {formatCurrency(fFee, true)}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                            {rr && <span className="text-sky-400">1:{rr} R:R</span>}
+                          </div>
                         </div>
 
                         <div className="flex items-center gap-1">
@@ -575,16 +882,24 @@ export default function JournalPage() {
                               setIsTradeModalOpen(true);
                             }}
                             className="p-1.5 text-slate-400 hover:text-white rounded-lg transition-colors"
-                            title="Edit Trade"
+                            title="Edit Position / Assign Signal Provider"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => {
-                              if (confirm("Delete this trade?")) handleDeleteTrade(trade.id);
+                              if (
+                                confirm(
+                                  trade.exchange_trade_id
+                                    ? "Delete this synced position? It will be permanently excluded and NEVER re-imported on future syncs."
+                                    : "Delete this position?"
+                                )
+                              ) {
+                                handleDeleteTrade(trade.id);
+                              }
                             }}
                             className="p-1.5 text-slate-400 hover:text-rose-400 rounded-lg transition-colors"
-                            title="Delete Trade"
+                            title="Delete (won't be re-imported on future syncs)"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -592,32 +907,29 @@ export default function JournalPage() {
                       </div>
                     </div>
 
-                    {/* Chart Image Thumbnail + Reasons Grid */}
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
-                      {trade.chart_image && (
-                        <div
-                          className="md:col-span-3 cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800 bg-black/40 h-24 sm:h-28 flex items-center justify-center"
-                          onClick={() => setSelectedTrade(trade)}
-                          title="Click to expand chart autopsy"
-                        >
-                          <img
-                            src={trade.chart_image}
-                            alt="Chart Preview"
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                          />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[11px] font-semibold gap-1">
-                            <ImageIcon className="w-3.5 h-3.5" /> View Setup
+                    {/* Chart Image Thumbnail + Reasons */}
+                    {(trade.chart_image || trade.reason_entry || trade.reason_outcome) && (
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 text-xs">
+                        {trade.chart_image && (
+                          <div
+                            className="md:col-span-3 cursor-pointer group relative overflow-hidden rounded-lg border border-slate-800 bg-black/40 h-24 sm:h-28 flex items-center justify-center"
+                            onClick={() => setSelectedTrade(trade)}
+                            title="Click to expand chart autopsy"
+                          >
+                            <img
+                              src={trade.chart_image}
+                              alt="Chart Preview"
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            />
                           </div>
-                        </div>
-                      )}
+                        )}
 
-                      <div className={trade.chart_image ? "md:col-span-9 space-y-2" : "md:col-span-12 space-y-2"}>
-                        {(trade.reason_entry || trade.reason_outcome) && (
+                        <div className={trade.chart_image ? "md:col-span-9" : "md:col-span-12"}>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                             {trade.reason_entry && (
                               <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/80">
                                 <span className="text-[11px] font-semibold text-sky-400 block mb-1">
-                                  Why I took the trade:
+                                  Entry Notes:
                                 </span>
                                 <p className="text-slate-300 leading-relaxed whitespace-pre-wrap line-clamp-3">
                                   {trade.reason_entry}
@@ -627,7 +939,7 @@ export default function JournalPage() {
                             {trade.reason_outcome && (
                               <div className="p-2.5 rounded-lg bg-slate-900/60 border border-slate-800/80">
                                 <span className="text-[11px] font-semibold text-emerald-400 block mb-1">
-                                  Why profit / loss was made:
+                                  Outcome / Fee Summary:
                                 </span>
                                 <p className="text-slate-300 leading-relaxed whitespace-pre-wrap line-clamp-3">
                                   {trade.reason_outcome}
@@ -635,13 +947,13 @@ export default function JournalPage() {
                               </div>
                             )}
                           </div>
-                        )}
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    {/* Footer */}
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-400 font-mono gap-1">
-                      <div>
+                    {/* Footer: Prices + 1-Click Account Assignment */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-400 gap-2">
+                      <div className="font-mono">
                         {trade.entry_price ? (
                           <span>
                             Entry: {trade.entry_price}{" "}
@@ -649,27 +961,46 @@ export default function JournalPage() {
                             {trade.quantity ? `• Qty: ${trade.quantity}` : ""}
                           </span>
                         ) : (
-                          <span>Quick-logged trade</span>
+                          <span>Quick-logged position</span>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center flex-wrap gap-3">
+                        {/* Inline 1-Click Account Assignment */}
+                        {accounts.length > 1 && (
+                          <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2 py-0.5">
+                            <Layers className="w-3 h-3 text-sky-400" />
+                            <select
+                              value={trade.account_id || "acc_default"}
+                              onChange={(e) => handleMoveToAccount(trade.id, e.target.value)}
+                              className="bg-transparent text-[11px] text-slate-300 focus:outline-none cursor-pointer"
+                              title="Assign this position to another target or loss recovery account"
+                            >
+                              {accounts.map((acc) => (
+                                <option key={acc.id} value={acc.id} className="bg-slate-900 text-white">
+                                  {acc.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
                         {trade.chart_url && (
                           <a
                             href={trade.chart_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-sky-400 hover:underline flex items-center gap-1 font-sans"
+                            className="text-sky-400 hover:underline flex items-center gap-1"
                           >
-                            <ExternalLink className="w-3 h-3" /> External Link
+                            <ExternalLink className="w-3 h-3" /> Chart Link
                           </a>
                         )}
 
                         <button
                           onClick={() => setSelectedTrade(trade)}
-                          className="text-slate-300 hover:text-white underline font-sans"
+                          className="text-slate-300 hover:text-white underline"
                         >
-                          View Details & Notes
+                          View Details
                         </button>
                       </div>
                     </div>
@@ -684,7 +1015,10 @@ export default function JournalPage() {
       <TradeFormModal
         isOpen={isTradeModalOpen}
         onClose={() => setIsTradeModalOpen(false)}
-        onSuccess={() => fetchTrades()}
+        onSuccess={() => {
+          fetchTrades();
+          refreshAccounts();
+        }}
         editTrade={editTrade}
       />
 

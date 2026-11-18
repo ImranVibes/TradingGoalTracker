@@ -5,6 +5,7 @@ import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { Trade } from "@/lib/types";
+import { useAccounts } from "../providers/AccountProvider";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
 import {
   TrendingUp,
@@ -38,8 +39,17 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onDelete,
 }) => {
   const [isImageZoomed, setIsImageZoomed] = useState(false);
+  const { accounts } = useAccounts();
 
   if (!trade) return null;
+
+  const accountName =
+    accounts.find((a) => a.id === (trade.account_id || "acc_default"))?.name || "Main Account";
+  const tradingFee = Math.abs(Number(trade.trading_fee || 0));
+  const fundingFee = Number(trade.funding_fee || 0);
+  const grossPnl =
+    trade.gross_pnl !== undefined && trade.gross_pnl !== null ? Number(trade.gross_pnl) : trade.pnl;
+  const hasFeeData = tradingFee > 0 || fundingFee !== 0;
 
   const rrRatio = calculateRR(trade.entry_price || 0, trade.stop_loss, trade.take_profit, trade.direction);
   const isProfit = trade.pnl > 0;
@@ -177,6 +187,40 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
             <span className="text-slate-400 block text-[10px] uppercase">Lot Size</span>
             <span className="font-mono text-white block mt-0.5">{trade.quantity || 1}</span>
+          </div>
+        </div>
+
+        {/* Account & Fee Breakdown */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Account</span>
+            <span className="font-semibold text-sky-300 truncate block mt-0.5">{accountName}</span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Gross P&L</span>
+            <span
+              className={`font-mono font-bold block mt-0.5 ${
+                grossPnl >= 0 ? "text-emerald-400" : "text-rose-400"
+              }`}
+            >
+              {formatCurrency(grossPnl, true)}
+            </span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Trading Fee</span>
+            <span className="font-mono text-amber-300 block mt-0.5">
+              {tradingFee > 0 ? `-${formatCurrency(tradingFee)}` : "$0.00"}
+            </span>
+          </div>
+          <div className="p-2.5 rounded-lg bg-slate-900 border border-slate-800">
+            <span className="text-slate-400 block text-[10px] uppercase">Funding Fee</span>
+            <span
+              className={`font-mono block mt-0.5 ${
+                fundingFee < 0 ? "text-rose-300" : fundingFee > 0 ? "text-emerald-300" : "text-slate-400"
+              }`}
+            >
+              {fundingFee !== 0 ? formatCurrency(fundingFee, true) : "$0.00"}
+            </span>
           </div>
         </div>
 

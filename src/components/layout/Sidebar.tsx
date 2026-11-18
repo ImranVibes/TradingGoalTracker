@@ -13,6 +13,7 @@ import {
   Calculator,
   Radio,
   Settings,
+  Layers,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +24,12 @@ const NAV_ITEMS = [
     icon: LayoutDashboard,
   },
   {
-    name: "Trading Journal",
+    name: "Trading Accounts",
+    href: "/accounts",
+    icon: Layers,
+  },
+  {
+    name: "Positions Journal",
     href: "/journal",
     icon: BookOpen,
   },

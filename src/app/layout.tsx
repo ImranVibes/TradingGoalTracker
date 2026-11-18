@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import React from "react";
+import { AccountProvider } from "@/components/providers/AccountProvider";
 
 export const metadata: Metadata = {
   title: "Trading & Goal Tracker",
-  description: "Personal trading journal, profit goals, and cashflow tracker",
+  description: "Personal trading journal, profit goals, multi-account tracker, and exchange auto-sync",
 };
 
 export default function RootLayout({
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-[#090d16] text-slate-100 antialiased">
-        {children}
+        <AccountProvider>{children}</AccountProvider>
       </body>
     </html>
   );

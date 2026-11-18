@@ -1,9 +1,35 @@
 export type TradeStatus = "WON" | "LOST" | "BREAKEVEN" | "OPEN";
 export type TradeDirection = "LONG" | "SHORT";
 export type MarketType = "FOREX" | "CRYPTO" | "COMMODITY" | "INDEX" | "STOCKS";
+export type AccountType = "PERSONAL" | "TARGET" | "RECOVERY" | "FUNDED";
+
+export interface TradingAccount {
+  id: string;
+  name: string;
+  type: AccountType;
+  starting_balance: number;
+  target_amount: number;
+  initial_loss: number;
+  color: string;
+  notes?: string;
+  is_default: boolean;
+  created_at: string;
+  updated_at?: string;
+  // Computed live stats (returned by GET /api/accounts)
+  net_pnl?: number;
+  gross_pnl?: number;
+  total_fees?: number;
+  total_trades?: number;
+  wins?: number;
+  losses?: number;
+  win_rate?: number;
+  current_balance?: number;
+  progress_pct?: number;
+}
 
 export interface Trade {
   id: string;
+  account_id?: string;
   symbol: string;
   market?: MarketType;
   direction?: TradeDirection;
@@ -13,6 +39,9 @@ export interface Trade {
   take_profit?: number | null;
   quantity?: number;
   pnl: number;
+  gross_pnl?: number | null;
+  trading_fee?: number | null;
+  funding_fee?: number | null;
   pnl_percentage?: number | null;
   status: TradeStatus;
   trade_date: string;
@@ -38,6 +67,7 @@ export type CashflowType = "WITHDRAWAL" | "EXPENSE" | "DEPOSIT";
 
 export interface Cashflow {
   id: string;
+  account_id?: string;
   type: CashflowType;
   amount: number;
   category: string;
@@ -53,6 +83,7 @@ export type GoalStatus = "ACTIVE" | "ACHIEVED" | "PAUSED";
 
 export interface Goal {
   id: string;
+  account_id?: string;
   title: string;
   category: GoalCategory;
   target_amount: number;
@@ -122,9 +153,16 @@ export interface ExchangeConnection {
   id: string;
   exchange: "binance" | "bybit";
   name: string;
+  label?: string;
   api_key: string;
+  api_key_masked?: string;
   api_secret: string;
   account_type: "SPOT" | "FUTURES" | "ALL";
+  category?: string;
+  account_id?: string;
+  auto_sync?: boolean;
+  sync_from_date?: string | null;
+  last_synced_trade_time?: number | null;
   is_active: boolean;
   last_synced_at?: string | null;
   created_at: string;
@@ -134,9 +172,11 @@ export interface ExchangeConnection {
 export interface UserSettings {
   initial_balance: number;
   currency: string;
-  risk_percentage: number;
-  default_leverage: number;
+  risk_percentage?: number;
+  risk_per_trade_pct?: number;
+  default_leverage?: number;
   max_drawdown_limit?: number;
+  max_drawdown_limit_pct?: number;
 }
 
 export interface DrawdownStats {
@@ -153,6 +193,10 @@ export interface DrawdownStats {
 
 export interface DashboardStats {
   net_pnl: number;
+  gross_pnl: number;
+  total_trading_fees: number;
+  total_funding_fees: number;
+  total_fees: number;
   total_profit: number;
   total_loss: number;
   win_rate: number;
@@ -169,6 +213,8 @@ export interface DashboardStats {
   average_loss: number;
   largest_win: number;
   largest_loss: number;
+  starting_balance?: number;
+  living_balance?: number;
   drawdown: DrawdownStats;
   equity_curve: {
     date: string;
@@ -186,6 +232,7 @@ export interface DashboardStats {
   exchange_distribution: {
     exchange: string;
     pnl: number;
+    total_pnl?: number;
     count: number;
     win_rate: number;
   }[];

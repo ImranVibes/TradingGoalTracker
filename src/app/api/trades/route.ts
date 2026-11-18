@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTrades, createTrade } from "@/lib/db";
+import { getTrades, createTrade, deleteTradesBulk } from "@/lib/db";
 import { Trade } from "@/lib/types";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
 const TradeSchema = z.object({
+  account_id: z.string().optional().default("acc_default"),
   symbol: z.string().min(1, "Symbol/Currency is required").max(32),
   market: z.enum(["FOREX", "CRYPTO", "COMMODITY", "INDEX", "STOCKS"]).default("FOREX"),
   direction: z.enum(["LONG", "SHORT"]).default("LONG"),
@@ -15,6 +16,9 @@ const TradeSchema = z.object({
   take_profit: z.coerce.number().optional().nullable(),
   quantity: z.coerce.number().optional().default(1),
   pnl: z.coerce.number().default(0),
+  gross_pnl: z.coerce.number().optional().nullable(),
+  trading_fee: z.coerce.number().optional().default(0),
+  funding_fee: z.coerce.number().optional().default(0),
   pnl_percentage: z.coerce.number().optional().nullable(),
   status: z.enum(["WON", "LOST", "BREAKEVEN", "OPEN"]).default("OPEN"),
   trade_date: z.string().default(() => new Date().toISOString()),
@@ -43,8 +47,17 @@ export async function GET(req: NextRequest) {
     const endDate = searchParams.get("endDate") || undefined;
     const signal_provider = searchParams.get("signal_provider") || undefined;
     const exchange = searchParams.get("exchange") || undefined;
+    const account_id = searchParams.get("account_id") || undefined;
 
-    const trades = await getTrades({ symbol, status, startDate, endDate, signal_provider, exchange });
+    const trades = await getTrades({
+      symbol,
+      status,
+      startDate,
+      endDate,
+      signal_provider,
+      exchange,
+      account_id,
+    });
     return NextResponse.json({ success: true, count: trades.length, trades });
   } catch (error: any) {
     console.error("[API trades GET] Error:", error);
@@ -75,11 +88,23 @@ export async function POST(req: NextRequest) {
       else status = "BREAKEVEN";
     }
 
+    const tradingFee = Math.abs(Number(validated.trading_fee || 0));
+    const fundingFee = Number(validated.funding_fee || 0);
+    const grossPnl =
+      validated.gross_pnl !== undefined && validated.gross_pnl !== null
+        ? Number(validated.gross_pnl)
+        : Number((pnl + tradingFee - fundingFee).toFixed(4));
+
     const newTrade: Trade = {
       ...validated,
       id: tradeId,
+      account_id: validated.account_id || "acc_default",
       pnl,
+      gross_pnl: grossPnl,
+      trading_fee: tradingFee,
+      funding_fee: fundingFee,
       status,
+      exchange_trade_id: validated.exchange_trade_id || undefined,
       created_at: now,
       updated_at: now,
     };
@@ -91,6 +116,24 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ success: false, error: error.errors[0].message }, { status: 400 });
     }
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
+    if (ids.length === 0) {
+      return NextResponse.json({ success: false, error: "No trade IDs provided" }, { status: 400 });
+    }
+    const deleted = await deleteTradesBulk(ids);
+    return NextResponse.json({
+      success: true,
+      deleted,
+      message: `Deleted ${deleted} position(s). They will not be re-imported on future syncs.`,
+    });
+  } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

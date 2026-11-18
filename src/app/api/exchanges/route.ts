@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getExchangeConnections, saveExchangeConnection, deleteExchangeConnection } from "@/lib/db";
+import {
+  getExchangeConnections,
+  saveExchangeConnection,
+  updateExchangeConnectionSettings,
+  deleteExchangeConnection,
+  getIgnoredExchangeTradeCount,
+} from "@/lib/db";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
@@ -13,13 +19,26 @@ const ConnectionSchema = z.object({
   api_secret: z.string().min(1, "API Secret is required"),
   account_type: z.string().optional(),
   category: z.string().optional(),
+  account_id: z.string().optional().default("acc_default"),
+  auto_sync: z.boolean().optional().default(true),
+  sync_from_date: z.string().optional().nullable(),
   is_active: z.boolean().default(true),
+});
+
+const UpdateConnectionSchema = z.object({
+  id: z.string().min(1, "Connection ID is required"),
+  account_id: z.string().optional(),
+  auto_sync: z.boolean().optional(),
+  sync_from_date: z.string().optional().nullable(),
+  name: z.string().optional(),
 });
 
 export async function GET() {
   try {
-    const connections = await getExchangeConnections();
-    // Return masked credentials for security and standard fields
+    const [connections, ignoredCount] = await Promise.all([
+      getExchangeConnections(),
+      getIgnoredExchangeTradeCount(),
+    ]);
     const masked = connections.map((c) => ({
       ...c,
       label: c.name,
@@ -35,7 +54,11 @@ export async function GET() {
       api_secret: "••••••••••••••••",
     }));
 
-    return NextResponse.json({ success: true, connections: masked });
+    return NextResponse.json({
+      success: true,
+      connections: masked,
+      ignored_count: ignoredCount,
+    });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
@@ -65,6 +88,9 @@ export async function POST(req: NextRequest) {
       api_key: validated.api_key.trim(),
       api_secret: validated.api_secret.trim(),
       account_type: resolvedType,
+      account_id: validated.account_id || "acc_default",
+      auto_sync: validated.auto_sync ?? true,
+      sync_from_date: validated.sync_from_date || null,
       is_active: validated.is_active,
     });
 
@@ -77,6 +103,21 @@ export async function POST(req: NextRequest) {
         { success: false, error: `${field}: ${firstIssue.message}` },
         { status: 400 }
       );
+    }
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+export async function PUT(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const validated = UpdateConnectionSchema.parse(body);
+    const { id, ...updates } = validated;
+    await updateExchangeConnectionSettings(id, updates);
+    return NextResponse.json({ success: true, message: "Connection settings updated." });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      return NextResponse.json({ success: false, error: error.errors[0].message }, { status: 400 });
     }
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
