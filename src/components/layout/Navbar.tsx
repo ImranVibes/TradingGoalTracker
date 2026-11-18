@@ -12,6 +12,7 @@ import {
   Settings,
   Layers,
   CandlestickChart,
+  Lock,
 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { useAccounts } from "../providers/AccountProvider";
@@ -37,6 +38,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     setIsRefreshing(true);
     if (onRefresh) await onRefresh();
     setTimeout(() => setIsRefreshing(false), 400);
+  };
+
+  const handleLock = async () => {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {}
+    window.location.href = "/login";
   };
 
   return (
@@ -116,6 +124,14 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Settings className="w-3.5 h-3.5 text-slate-400 hover:text-white" />
           </Link>
+
+          <button
+            onClick={handleLock}
+            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors"
+            title="Lock Vault (Sign Out)"
+          >
+            <Lock className="w-3.5 h-3.5" />
+          </button>
 
           {onRefresh && (
             <button

@@ -242,6 +242,13 @@ async function initPostgresTables(client: any) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS tracker_auth_attempts (
+      ip VARCHAR(128) PRIMARY KEY,
+      failed_count INTEGER NOT NULL DEFAULT 0,
+      locked_until TIMESTAMPTZ DEFAULT NULL,
+      last_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS tracker_signal_providers (
       id VARCHAR(64) PRIMARY KEY,
       name VARCHAR(100) NOT NULL UNIQUE,
@@ -2667,5 +2674,147 @@ export async function deleteIndicator(id: string): Promise<boolean> {
     store.indicators = (store.indicators || []).filter((i) => i.id !== id);
     saveLocalStore(store);
     return true;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// AUTH PASSWORD & BRUTE-FORCE PROTECTION (5 ATTEMPTS MAX, 15 MIN LOCKOUT)
+// -----------------------------------------------------------------------------
+export const MAX_AUTH_ATTEMPTS = 5;
+export const LOCKOUT_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+const localAuthAttempts = new Map<string, { failed_count: number; locked_until: number | null }>();
+
+export async function getStoredPasswordHash(): Promise<{ salt: string; hash: string } | null> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT value FROM tracker_settings WHERE key = 'auth_password_hash'");
+    if (res.rows.length > 0 && res.rows[0].value?.hash && res.rows[0].value?.salt) {
+      return { salt: String(res.rows[0].value.salt), hash: String(res.rows[0].value.hash) };
+    }
+    return null;
+  } else {
+    const store = loadLocalStore();
+    const v = store.settings?.auth_password_hash;
+    if (v?.hash && v?.salt) return { salt: String(v.salt), hash: String(v.hash) };
+    return null;
+  }
+}
+
+export async function setStoredPasswordHash(salt: string, hash: string): Promise<void> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_settings (key, value, updated_at)
+       VALUES ('auth_password_hash', $1, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [JSON.stringify({ salt, hash })]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.settings) store.settings = {};
+    store.settings.auth_password_hash = { salt, hash };
+    saveLocalStore(store);
+  }
+}
+
+export interface AuthAttemptState {
+  failedCount: number;
+  remainingAttempts: number;
+  isLocked: boolean;
+  lockedUntilMs: number | null;
+  retryAfterSeconds: number;
+}
+
+export async function getAuthAttemptState(ip: string): Promise<AuthAttemptState> {
+  const now = Date.now();
+  const { isPostgres } = await checkConnection();
+
+  let failedCount = 0;
+  let lockedUntilMs: number | null = null;
+
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT failed_count, locked_until FROM tracker_auth_attempts WHERE ip = $1", [ip]);
+    if (res.rows.length > 0) {
+      failedCount = Number(res.rows[0].failed_count || 0);
+      lockedUntilMs = res.rows[0].locked_until ? new Date(res.rows[0].locked_until).getTime() : null;
+    }
+  } else {
+    const rec = localAuthAttempts.get(ip);
+    if (rec) {
+      failedCount = rec.failed_count;
+      lockedUntilMs = rec.locked_until;
+    }
+  }
+
+  // If previous lockout expired, auto-reset cleanly
+  if (lockedUntilMs && now >= lockedUntilMs) {
+    await resetAuthAttempts(ip);
+    return {
+      failedCount: 0,
+      remainingAttempts: MAX_AUTH_ATTEMPTS,
+      isLocked: false,
+      lockedUntilMs: null,
+      retryAfterSeconds: 0,
+    };
+  }
+
+  const isLocked = Boolean(lockedUntilMs && now < lockedUntilMs);
+  const retryAfterSeconds = isLocked && lockedUntilMs ? Math.ceil((lockedUntilMs - now) / 1000) : 0;
+  const remainingAttempts = isLocked ? 0 : Math.max(0, MAX_AUTH_ATTEMPTS - failedCount);
+
+  return {
+    failedCount,
+    remainingAttempts,
+    isLocked,
+    lockedUntilMs,
+    retryAfterSeconds,
+  };
+}
+
+export async function recordFailedAuthAttempt(ip: string): Promise<AuthAttemptState> {
+  const current = await getAuthAttemptState(ip);
+  if (current.isLocked) return current;
+
+  const nextCount = current.failedCount + 1;
+  const shouldLock = nextCount >= MAX_AUTH_ATTEMPTS;
+  const lockedUntilMs = shouldLock ? Date.now() + LOCKOUT_DURATION_MS : null;
+  const lockedUntilIso = lockedUntilMs ? new Date(lockedUntilMs).toISOString() : null;
+
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_auth_attempts (ip, failed_count, locked_until, last_attempt_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (ip) DO UPDATE SET
+         failed_count = EXCLUDED.failed_count,
+         locked_until = EXCLUDED.locked_until,
+         last_attempt_at = NOW()`,
+      [ip, nextCount, lockedUntilIso]
+    );
+  } else {
+    localAuthAttempts.set(ip, { failed_count: nextCount, locked_until: lockedUntilMs });
+  }
+
+  return {
+    failedCount: nextCount,
+    remainingAttempts: shouldLock ? 0 : Math.max(0, MAX_AUTH_ATTEMPTS - nextCount),
+    isLocked: shouldLock,
+    lockedUntilMs,
+    retryAfterSeconds: shouldLock ? Math.ceil(LOCKOUT_DURATION_MS / 1000) : 0,
+  };
+}
+
+export async function resetAuthAttempts(ip: string): Promise<void> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query("DELETE FROM tracker_auth_attempts WHERE ip = $1", [ip]);
+  } else {
+    localAuthAttempts.delete(ip);
   }
 }

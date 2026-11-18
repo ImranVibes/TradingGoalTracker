@@ -50,6 +50,7 @@ export const AccountProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      if (window.location.pathname === "/login") return;
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         setActiveAccountIdState(saved);

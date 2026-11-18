@@ -26,6 +26,7 @@ import {
   Calendar,
   RotateCcw,
   CheckSquare,
+  Lock,
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -67,6 +68,13 @@ export default function SettingsPage() {
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isSelectiveImportOpen, setIsSelectiveImportOpen] = useState(false);
   const [selectiveConnId, setSelectiveConnId] = useState<string | undefined>(undefined);
+
+  // Change PIN / Password state
+  const [currentPin, setCurrentPin] = useState("");
+  const [newPin, setNewPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [isUpdatingPin, setIsUpdatingPin] = useState(false);
+  const [pinMsg, setPinMsg] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
@@ -306,6 +314,40 @@ export default function SettingsPage() {
 
   const handleExport = (format: "csv" | "json") => {
     window.open(`/api/export?format=${format}`, "_blank");
+  };
+
+  const handleChangePin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPinMsg(null);
+    if (!currentPin || !newPin) {
+      setPinMsg({ type: "error", text: "Enter both your current PIN and new PIN." });
+      return;
+    }
+    if (newPin !== confirmPin) {
+      setPinMsg({ type: "error", text: "New PIN and confirmation do not match." });
+      return;
+    }
+    setIsUpdatingPin(true);
+    try {
+      const res = await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current_password: currentPin, new_password: newPin }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setPinMsg({ type: "success", text: data.message || "Access PIN updated." });
+        setCurrentPin("");
+        setNewPin("");
+        setConfirmPin("");
+      } else {
+        setPinMsg({ type: "error", text: data.error || "Failed to update PIN." });
+      }
+    } catch (err: any) {
+      setPinMsg({ type: "error", text: err.message || "Failed to update PIN." });
+    } finally {
+      setIsUpdatingPin(false);
+    }
   };
 
   return (
@@ -883,6 +925,97 @@ export default function SettingsPage() {
                   Download backup.json
                 </button>
               </div>
+            </div>
+          </section>
+
+          {/* SECTION 4: SECURITY & ACCESS PIN */}
+          <section className="space-y-4">
+            <div className="border-b border-slate-800 pb-3">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Lock className="w-4 h-4 text-rose-400" />
+                Vault Security & Access PIN
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Protected by 5-attempt brute-force lockout (15-minute cooldown) and signed HTTP-only session cookies.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5">
+              <form onSubmit={handleChangePin} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      Current PIN / Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      value={currentPin}
+                      onChange={(e) => setCurrentPin(e.target.value)}
+                      placeholder="Enter current PIN"
+                      className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      New PIN / Password
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={4}
+                      value={newPin}
+                      onChange={(e) => setNewPin(e.target.value)}
+                      placeholder="Min 4 characters"
+                      className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-1">
+                      Confirm New PIN
+                    </label>
+                    <input
+                      type="password"
+                      required
+                      minLength={4}
+                      value={confirmPin}
+                      onChange={(e) => setConfirmPin(e.target.value)}
+                      placeholder="Re-enter new PIN"
+                      className="w-full rounded-xl bg-slate-900 border border-slate-700 px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-sky-500"
+                    />
+                  </div>
+                </div>
+
+                {pinMsg && (
+                  <div
+                    className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                      pinMsg.type === "success"
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-300"
+                        : "bg-rose-500/10 border-rose-500/30 text-rose-300"
+                    }`}
+                  >
+                    {pinMsg.type === "success" ? (
+                      <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                    )}
+                    <span>{pinMsg.text}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    disabled={isUpdatingPin}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition-all flex items-center gap-1.5 disabled:opacity-50"
+                  >
+                    <Lock className="w-3.5 h-3.5" />
+                    {isUpdatingPin ? "Updating..." : "Update Access PIN"}
+                  </button>
+                </div>
+              </form>
             </div>
           </section>
         </main>
