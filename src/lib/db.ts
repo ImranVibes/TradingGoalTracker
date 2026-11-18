@@ -13,6 +13,7 @@ import {
   UserSettings,
   DrawdownStats,
   TradingAccount,
+  CustomIndicator,
 } from "./types";
 import { BinanceClient, BybitClient, ExchangeSyncResult } from "./exchanges";
 
@@ -54,6 +55,7 @@ interface LocalStore {
   dailySummaries: Record<string, DailySummary>;
   signal_providers: SignalProvider[];
   exchange_connections: ExchangeConnection[];
+  indicators?: CustomIndicator[];
   settings: Record<string, any>;
 }
 
@@ -226,6 +228,17 @@ async function initPostgresTables(client: any) {
     CREATE TABLE IF NOT EXISTS tracker_settings (
       key VARCHAR(64) PRIMARY KEY,
       value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS tracker_indicators (
+      id VARCHAR(64) PRIMARY KEY,
+      name VARCHAR(128) NOT NULL,
+      code TEXT NOT NULL,
+      language VARCHAR(16) NOT NULL DEFAULT 'pine',
+      overlay BOOLEAN DEFAULT TRUE,
+      is_enabled BOOLEAN DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -2568,4 +2581,91 @@ export async function importSelectedExchangePositions(
   }
 
   return { imported, skipped };
+}
+
+// -----------------------------------------------------------------------------
+// CUSTOM INDICATORS (PINE SCRIPT & JS) API
+// -----------------------------------------------------------------------------
+export async function getIndicators(): Promise<CustomIndicator[]> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT * FROM tracker_indicators ORDER BY created_at DESC");
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      name: r.name,
+      code: r.code,
+      language: r.language === "js" ? "js" : "pine",
+      overlay: r.overlay ?? true,
+      is_enabled: r.is_enabled ?? true,
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    }));
+  } else {
+    const store = loadLocalStore();
+    return store.indicators || [];
+  }
+}
+
+export async function saveIndicator(data: Partial<CustomIndicator>): Promise<CustomIndicator> {
+  const { isPostgres } = await checkConnection();
+  const now = new Date().toISOString();
+  const id = data.id || `ind_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const name = data.name?.trim() || "Custom Indicator";
+  const code = data.code || "";
+  const language: "pine" | "js" = data.language === "js" ? "js" : "pine";
+  const overlay = data.overlay ?? true;
+  const is_enabled = data.is_enabled ?? true;
+
+  const item: CustomIndicator = {
+    id,
+    name,
+    code,
+    language,
+    overlay,
+    is_enabled,
+    created_at: now,
+    updated_at: now,
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_indicators (id, name, code, language, overlay, is_enabled, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (id) DO UPDATE SET
+         name = EXCLUDED.name,
+         code = EXCLUDED.code,
+         language = EXCLUDED.language,
+         overlay = EXCLUDED.overlay,
+         is_enabled = EXCLUDED.is_enabled,
+         updated_at = NOW()`,
+      [id, name, code, language, overlay, is_enabled, now, now]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.indicators) store.indicators = [];
+    const idx = store.indicators.findIndex((i) => i.id === id);
+    if (idx !== -1) {
+      store.indicators[idx] = item;
+    } else {
+      store.indicators.unshift(item);
+    }
+    saveLocalStore(store);
+  }
+  return item;
+}
+
+export async function deleteIndicator(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query("DELETE FROM tracker_indicators WHERE id = $1", [id]);
+    return true;
+  } else {
+    const store = loadLocalStore();
+    store.indicators = (store.indicators || []).filter((i) => i.id !== id);
+    saveLocalStore(store);
+    return true;
+  }
 }

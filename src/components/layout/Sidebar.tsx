@@ -14,6 +14,7 @@ import {
   Radio,
   Settings,
   Layers,
+  CandlestickChart,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +23,11 @@ const NAV_ITEMS = [
     name: "Dashboard",
     href: "/",
     icon: LayoutDashboard,
+  },
+  {
+    name: "Chart",
+    href: "/chart",
+    icon: CandlestickChart,
   },
   {
     name: "Trading Accounts",

@@ -11,6 +11,7 @@ import {
   BarChart2,
   Settings,
   Layers,
+  CandlestickChart,
 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { useAccounts } from "../providers/AccountProvider";
@@ -92,6 +93,14 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Quick Actions */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
+          <Link
+            href="/chart"
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-amber-500/40 transition-colors"
+          >
+            <CandlestickChart className="w-3.5 h-3.5 text-amber-400" />
+            Chart
+          </Link>
+
           <Link
             href="/calculator"
             className="hidden md:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors"

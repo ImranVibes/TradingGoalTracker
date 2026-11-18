@@ -240,3 +240,14 @@ export interface DashboardStats {
     win_rate: number;
   }[];
 }
+
+export interface CustomIndicator {
+  id: string;
+  name: string;
+  code: string;
+  language: "pine" | "js";
+  overlay: boolean;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at?: string;
+}
