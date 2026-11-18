@@ -16,6 +16,8 @@ import {
   Layers,
   CandlestickChart,
   StickyNote,
+  CheckSquare,
+  Compass,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,16 @@ export const NAV_ITEMS = [
     name: "Chart",
     href: "/chart",
     icon: CandlestickChart,
+  },
+  {
+    name: "Sentiment Detector",
+    href: "/sentiment",
+    icon: Compass,
+  },
+  {
+    name: "Pre-Trade Checklist",
+    href: "/checklist",
+    icon: CheckSquare,
   },
   {
     name: "Trading Accounts",

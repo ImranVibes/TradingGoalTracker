@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
 import { PairIcon } from "../ui/PairIcon";
 import { Trade } from "@/lib/types";
+import { BEHAVIOR_TAGS, isHabitTag } from "@/lib/tradingMetrics";
 import { useAccounts } from "../providers/AccountProvider";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
 import {
@@ -40,9 +41,34 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
   onDelete,
 }) => {
   const [isImageZoomed, setIsImageZoomed] = useState(false);
+  const [mistakeTags, setMistakeTags] = useState<string[]>([]);
+  const [savingTags, setSavingTags] = useState(false);
   const { accounts } = useAccounts();
 
+  useEffect(() => {
+    setMistakeTags(Array.isArray(trade?.mistake_tags) ? trade.mistake_tags : []);
+  }, [trade]);
+
   if (!trade) return null;
+
+  const handleToggleBehaviorTag = async (tagId: string) => {
+    const next = mistakeTags.includes(tagId)
+      ? mistakeTags.filter((t) => t !== tagId)
+      : [...mistakeTags, tagId];
+    setMistakeTags(next);
+    setSavingTags(true);
+    try {
+      await fetch(`/api/trades/${trade.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mistake_tags: next }),
+      });
+      trade.mistake_tags = next;
+    } catch {}
+    finally {
+      setSavingTags(false);
+    }
+  };
 
   const accountName =
     accounts.find((a) => a.id === (trade.account_id || "acc_default"))?.name || "Main Account";
@@ -233,6 +259,47 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
             <span className="text-slate-200 select-all">{trade.exchange_trade_id}</span>
           </div>
         )}
+
+        {/* 1-Click Mistake & Habit Tagging */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-amber-300">
+              Mistake & Habit Tags (1-Click — Feeds Cost of Mistakes Report)
+            </span>
+            <div className="flex items-center gap-2">
+              {trade.discipline_score !== null && trade.discipline_score !== undefined && (
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                  Discipline: {trade.discipline_score}%
+                </span>
+              )}
+              {savingTags && <span className="text-[10px] text-slate-400">Saving...</span>}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {BEHAVIOR_TAGS.map((tag) => {
+              const active = mistakeTags.includes(tag.id);
+              const habit = isHabitTag(tag.id);
+              return (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() => handleToggleBehaviorTag(tag.id)}
+                  title={tag.description}
+                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold border transition-all ${
+                    active
+                      ? habit
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
+                        : "bg-rose-500/20 text-rose-300 border-rose-500/50"
+                      : "bg-slate-950/70 text-slate-400 border-slate-800 hover:text-white hover:border-slate-700"
+                  }`}
+                >
+                  {active ? "✓ " : "+ "}
+                  {tag.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         {/* Reason: Why I took the trade */}
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3.5 space-y-1">

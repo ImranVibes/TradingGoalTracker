@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/Badge";
 import { PairIcon } from "@/components/ui/PairIcon";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal } from "@/lib/types";
+import { BEHAVIOR_TAGS, isHabitTag } from "@/lib/tradingMetrics";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
 import {
   BookOpen,
@@ -433,6 +434,29 @@ export default function JournalPage() {
     setSelectedIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
     );
+  };
+
+  const handleToggleMistakeTag = async (trade: Trade, tagId: string) => {
+    const current = Array.isArray(trade.mistake_tags) ? trade.mistake_tags : [];
+    const next = current.includes(tagId)
+      ? current.filter((x) => x !== tagId)
+      : [...current, tagId];
+
+    // Optimistic UI update
+    setTrades((prev) =>
+      prev.map((t) => (t.id === trade.id ? { ...t, mistake_tags: next } : t))
+    );
+
+    try {
+      await fetch(`/api/trades/${trade.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mistake_tags: next }),
+      });
+    } catch (err) {
+      console.error(err);
+      fetchTrades();
+    }
   };
 
   const toggleSelectAllFiltered = () => {
@@ -1191,6 +1215,66 @@ export default function JournalPage() {
                         </div>
                       </div>
                     )}
+
+                    {/* 1-Click Mistake / Habit Tag Row */}
+                    <div className="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-800/50">
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-slate-500 mr-1">
+                        Tags:
+                      </span>
+                      {(trade.mistake_tags || []).map((tag) => {
+                        const habit = isHabitTag(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => handleToggleMistakeTag(trade, tag)}
+                            className={`text-[10px] px-2 py-0.5 rounded-md font-semibold border transition-colors ${
+                              habit
+                                ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300"
+                                : "bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-slate-800"
+                            }`}
+                            title="Click to remove tag"
+                          >
+                            {tag} ✕
+                          </button>
+                        );
+                      })}
+                      <select
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) handleToggleMistakeTag(trade, e.target.value);
+                        }}
+                        className="bg-slate-900 border border-slate-800 rounded-md px-2 py-0.5 text-[10px] text-slate-400 hover:text-white focus:outline-none cursor-pointer"
+                        title="1-click tag mistake or habit (feeds Cost of Mistakes analytics)"
+                      >
+                        <option value="" className="bg-slate-900 text-slate-400">
+                          + Tag Mistake / Habit
+                        </option>
+                        <optgroup label="Mistakes" className="bg-slate-900 text-rose-300">
+                          {BEHAVIOR_TAGS.filter(
+                            (b) => b.kind === "mistake" && !(trade.mistake_tags || []).includes(b.id)
+                          ).map((b) => (
+                            <option key={b.id} value={b.id} className="bg-slate-900 text-white">
+                              ⚠ {b.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Good Habits" className="bg-slate-900 text-emerald-300">
+                          {BEHAVIOR_TAGS.filter(
+                            (b) => b.kind === "habit" && !(trade.mistake_tags || []).includes(b.id)
+                          ).map((b) => (
+                            <option key={b.id} value={b.id} className="bg-slate-900 text-white">
+                              ✓ {b.label}
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
+                      {trade.discipline_score !== null && trade.discipline_score !== undefined && (
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-md bg-sky-500/15 text-sky-300 border border-sky-500/30 ml-auto">
+                          Discipline {trade.discipline_score}%
+                        </span>
+                      )}
+                    </div>
 
                     {/* Footer: Prices + 1-Click Account Assignment */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-400 gap-2">

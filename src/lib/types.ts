@@ -59,6 +59,8 @@ export interface Trade {
   chart_url?: string;
   chart_image?: string;
   tags?: string[];
+  mistake_tags?: string[];
+  discipline_score?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -265,4 +267,29 @@ export interface TradingNote {
   image_url?: string;
   created_at: string;
   updated_at?: string;
+}
+
+export interface ChecklistItem {
+  id: string;
+  title: string;
+  category: string;
+  description?: string;
+  is_critical: boolean;
+  sort_order: number;
+  enabled: boolean;
+  created_at: string;
+}
+
+export interface ChecklistLog {
+  id: string;
+  account_id: string;
+  symbol: string;
+  direction: TradeDirection;
+  checked_ids: string[];
+  total_items: number;
+  critical_passed: boolean;
+  score: number;
+  sentiment_verdict?: string;
+  notes?: string;
+  created_at: string;
 }

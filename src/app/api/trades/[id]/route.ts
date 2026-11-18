@@ -34,6 +34,8 @@ const TradeUpdateSchema = z.object({
   emotions_notes: z.string().optional(),
   chart_url: z.string().optional(),
   tags: z.array(z.string()).optional(),
+  mistake_tags: z.array(z.string()).optional(),
+  discipline_score: z.coerce.number().min(0).max(100).optional().nullable(),
 });
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {

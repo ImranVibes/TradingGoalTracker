@@ -12,6 +12,7 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
+import { SharePnlCardModal } from "@/components/analytics/SharePnlCardModal";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal, DashboardStats } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
@@ -35,6 +36,7 @@ import {
   RotateCcw,
   Layers,
   CheckSquare,
+  Share2,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -60,6 +62,7 @@ export default function DashboardPage() {
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [isSelectiveImportOpen, setIsSelectiveImportOpen] = useState(false);
+  const [isShareCardOpen, setIsShareCardOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [editTrade, setEditTrade] = useState<Trade | null>(null);
   const [editGoal, setEditGoal] = useState<Goal | null>(null);
@@ -206,6 +209,15 @@ export default function DashboardPage() {
               >
                 <CheckSquare className="w-3.5 h-3.5" />
                 Force Sync (Select)
+              </button>
+
+              <button
+                onClick={() => setIsShareCardOpen(true)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 transition-colors flex items-center gap-1.5"
+                title="Download or copy a crisp dark-mode PNG PnL card"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Share PnL
               </button>
 
               <Link
@@ -689,6 +701,14 @@ export default function DashboardPage() {
           refreshAccounts();
           setTimeout(() => setSyncMessage(null), 5000);
         }}
+      />
+
+      <SharePnlCardModal
+        isOpen={isShareCardOpen}
+        onClose={() => setIsShareCardOpen(false)}
+        trades={trades}
+        accountName={activeAccount ? activeAccount.name : "All Accounts (Combined)"}
+        startingBalance={activeAccount?.starting_balance || stats?.starting_balance || 0}
       />
     </div>
   );

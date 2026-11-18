@@ -15,7 +15,10 @@ import {
   TradingAccount,
   CustomIndicator,
   TradingNote,
+  ChecklistItem,
+  ChecklistLog,
 } from "./types";
+import { DEFAULT_CHECKLIST_SEED } from "./tradingMetrics";
 import { BinanceClient, BybitClient, ExchangeSyncResult } from "./exchanges";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -58,6 +61,8 @@ interface LocalStore {
   exchange_connections: ExchangeConnection[];
   indicators?: CustomIndicator[];
   notes?: TradingNote[];
+  checklist_items?: ChecklistItem[];
+  checklist_logs?: ChecklistLog[];
   settings: Record<string, any>;
 }
 
@@ -182,6 +187,8 @@ async function initPostgresTables(client: any) {
     ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS gross_pnl DOUBLE PRECISION DEFAULT NULL;
     ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS trading_fee DOUBLE PRECISION DEFAULT 0;
     ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS funding_fee DOUBLE PRECISION DEFAULT 0;
+    ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS mistake_tags TEXT DEFAULT '[]';
+    ALTER TABLE tracker_trades ADD COLUMN IF NOT EXISTS discipline_score DOUBLE PRECISION DEFAULT NULL;
 
     CREATE TABLE IF NOT EXISTS tracker_accounts (
       id VARCHAR(64) PRIMARY KEY,
@@ -340,6 +347,32 @@ async function initPostgresTables(client: any) {
     );
     CREATE INDEX IF NOT EXISTS idx_tracker_notes_account_id ON tracker_notes(account_id);
     CREATE INDEX IF NOT EXISTS idx_tracker_notes_date ON tracker_notes(note_date);
+
+    CREATE TABLE IF NOT EXISTS tracker_checklist_items (
+      id VARCHAR(64) PRIMARY KEY,
+      title VARCHAR(240) NOT NULL,
+      category VARCHAR(64) NOT NULL DEFAULT 'General',
+      description TEXT DEFAULT '',
+      is_critical BOOLEAN NOT NULL DEFAULT FALSE,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS tracker_checklist_logs (
+      id VARCHAR(64) PRIMARY KEY,
+      account_id VARCHAR(64) NOT NULL DEFAULT 'acc_default',
+      symbol VARCHAR(32) NOT NULL DEFAULT '',
+      direction VARCHAR(16) NOT NULL DEFAULT 'LONG',
+      checked_ids TEXT NOT NULL DEFAULT '[]',
+      total_items INTEGER NOT NULL DEFAULT 0,
+      critical_passed BOOLEAN NOT NULL DEFAULT TRUE,
+      score DOUBLE PRECISION NOT NULL DEFAULT 0,
+      sentiment_verdict VARCHAR(64) DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_tracker_checklist_logs_acc ON tracker_checklist_logs(account_id);
   `);
 }
 
@@ -477,6 +510,16 @@ function mapTradeRow(r: any): Trade {
     exchange_trade_id: r.exchange_trade_id || null,
     chart_image: r.chart_image || "",
     tags: typeof r.tags === "string" ? JSON.parse(r.tags || "[]") : r.tags || [],
+    mistake_tags:
+      typeof r.mistake_tags === "string"
+        ? JSON.parse(r.mistake_tags || "[]")
+        : Array.isArray(r.mistake_tags)
+        ? r.mistake_tags
+        : [],
+    discipline_score:
+      r.discipline_score !== null && r.discipline_score !== undefined
+        ? Number(r.discipline_score)
+        : null,
     trade_date: new Date(r.trade_date).toISOString(),
     closed_date: r.closed_date ? new Date(r.closed_date).toISOString() : null,
     created_at: new Date(r.created_at).toISOString(),
@@ -620,6 +663,11 @@ export async function createTrade(trade: Trade): Promise<Trade> {
   const tradingFee = Number(trade.trading_fee ?? 0);
   const fundingFee = Number(trade.funding_fee ?? 0);
   const grossPnl = trade.gross_pnl !== undefined && trade.gross_pnl !== null ? Number(trade.gross_pnl) : Number(trade.pnl || 0);
+  const mistakeTags = Array.isArray(trade.mistake_tags) ? trade.mistake_tags : [];
+  const disciplineScore =
+    trade.discipline_score !== undefined && trade.discipline_score !== null
+      ? Number(trade.discipline_score)
+      : null;
 
   if (exchangeTradeId) {
     const existing = await getTradeByExchangeId(exchangeTradeId);
@@ -633,8 +681,8 @@ export async function createTrade(trade: Trade): Promise<Trade> {
         id, account_id, symbol, market, direction, entry_price, exit_price, stop_loss, take_profit,
         quantity, pnl, gross_pnl, trading_fee, funding_fee, pnl_percentage, status, trade_date, closed_date, timeframe,
         session, strategy, signal_provider, exchange, exchange_trade_id, reason_entry, reason_outcome, lessons_learned, emotions_notes,
-        chart_url, chart_image, tags, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)`,
+        chart_url, chart_image, tags, mistake_tags, discipline_score, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)`,
       [
         trade.id,
         accountId,
@@ -667,6 +715,8 @@ export async function createTrade(trade: Trade): Promise<Trade> {
         trade.chart_url || "",
         chartImage,
         JSON.stringify(trade.tags || []),
+        JSON.stringify(mistakeTags),
+        disciplineScore,
         trade.created_at || new Date().toISOString(),
         trade.updated_at || new Date().toISOString(),
       ]
@@ -683,6 +733,8 @@ export async function createTrade(trade: Trade): Promise<Trade> {
       exchange,
       exchange_trade_id: exchangeTradeId || undefined,
       chart_image: chartImage,
+      mistake_tags: mistakeTags,
+      discipline_score: disciplineScore,
     };
     store.trades.unshift(tradeWithExtras);
     saveLocalStore(store);
@@ -706,6 +758,8 @@ export async function createTrade(trade: Trade): Promise<Trade> {
     exchange,
     exchange_trade_id: exchangeTradeId || undefined,
     chart_image: chartImage,
+    mistake_tags: mistakeTags,
+    discipline_score: disciplineScore,
   };
 }
 
@@ -741,6 +795,18 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
     updates.gross_pnl !== undefined && updates.gross_pnl !== null
       ? Number(updates.gross_pnl)
       : existing.gross_pnl ?? updates.pnl ?? existing.pnl;
+  const mistakeTags =
+    updates.mistake_tags !== undefined
+      ? Array.isArray(updates.mistake_tags)
+        ? updates.mistake_tags
+        : []
+      : existing.mistake_tags || [];
+  const disciplineScore =
+    updates.discipline_score !== undefined
+      ? updates.discipline_score !== null
+        ? Number(updates.discipline_score)
+        : null
+      : existing.discipline_score ?? null;
 
   const updated: Trade = {
     ...existing,
@@ -752,6 +818,8 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
     signal_provider: provider,
     exchange,
     chart_image: chartImage,
+    mistake_tags: mistakeTags,
+    discipline_score: disciplineScore,
     updated_at: new Date().toISOString(),
   };
 
@@ -765,8 +833,8 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
         stop_loss = $7, take_profit = $8, quantity = $9, pnl = $10, gross_pnl = $11, trading_fee = $12, funding_fee = $13, pnl_percentage = $14,
         status = $15, trade_date = $16, closed_date = $17, timeframe = $18, session = $19,
         strategy = $20, signal_provider = $21, exchange = $22, reason_entry = $23, reason_outcome = $24,
-        lessons_learned = $25, emotions_notes = $26, chart_url = $27, chart_image = $28, tags = $29, updated_at = $30
-      WHERE id = $31`,
+        lessons_learned = $25, emotions_notes = $26, chart_url = $27, chart_image = $28, tags = $29, mistake_tags = $30, discipline_score = $31, updated_at = $32
+      WHERE id = $33`,
       [
         accountId,
         updated.symbol.toUpperCase(),
@@ -797,6 +865,8 @@ export async function updateTrade(id: string, updates: Partial<Trade>): Promise<
         updated.chart_url || "",
         chartImage,
         JSON.stringify(updated.tags || []),
+        JSON.stringify(mistakeTags),
+        disciplineScore,
         updated.updated_at,
         id,
       ]
@@ -3207,6 +3277,306 @@ export async function deleteNote(id: string): Promise<boolean> {
     const before = store.notes.length;
     store.notes = store.notes.filter((n) => n.id !== id);
     if (store.notes.length !== before) {
+      saveLocalStore(store);
+      return true;
+    }
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// PRE-TRADE CHECKLIST ITEMS & DISCIPLINE LOGS API
+// -----------------------------------------------------------------------------
+export async function getChecklistItems(): Promise<ChecklistItem[]> {
+  const { isPostgres } = await checkConnection();
+
+  if (isPostgres) {
+    const p = getPool();
+    const initRes = await p.query("SELECT value FROM tracker_settings WHERE key = 'checklist_initialized'");
+    const isInitialized = initRes.rows.length > 0;
+
+    if (!isInitialized) {
+      for (const item of DEFAULT_CHECKLIST_SEED) {
+        await p.query(
+          `INSERT INTO tracker_checklist_items (id, title, category, description, is_critical, sort_order, enabled, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+           ON CONFLICT (id) DO NOTHING`,
+          [item.id, item.title, item.category, item.description, item.is_critical, item.sort_order, item.enabled]
+        );
+      }
+      await p.query(
+        `INSERT INTO tracker_settings (key, value, updated_at)
+         VALUES ('checklist_initialized', '{"initialized":true}', NOW())
+         ON CONFLICT (key) DO NOTHING`
+      );
+    }
+
+    const res = await p.query(
+      "SELECT * FROM tracker_checklist_items ORDER BY sort_order ASC, created_at ASC"
+    );
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      title: r.title,
+      category: r.category || "General",
+      description: r.description || "",
+      is_critical: Boolean(r.is_critical),
+      sort_order: Number(r.sort_order || 0),
+      enabled: r.enabled !== false,
+      created_at: new Date(r.created_at).toISOString(),
+    }));
+  } else {
+    const store = loadLocalStore();
+    if (!store.settings?.checklist_initialized) {
+      store.checklist_items = DEFAULT_CHECKLIST_SEED.map((item) => ({
+        ...item,
+        created_at: new Date().toISOString(),
+      }));
+      store.settings = { ...(store.settings || {}), checklist_initialized: true };
+      saveLocalStore(store);
+    }
+    return [...(store.checklist_items || [])].sort((a, b) => a.sort_order - b.sort_order);
+  }
+}
+
+export async function createChecklistItem(item: ChecklistItem): Promise<ChecklistItem> {
+  const { isPostgres } = await checkConnection();
+  const record: ChecklistItem = {
+    ...item,
+    category: item.category?.trim() || "General",
+    description: item.description?.trim() || "",
+    is_critical: Boolean(item.is_critical),
+    sort_order: Number(item.sort_order || 100),
+    enabled: item.enabled !== false,
+    created_at: item.created_at || new Date().toISOString(),
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_checklist_items (id, title, category, description, is_critical, sort_order, enabled, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [
+        record.id,
+        record.title,
+        record.category,
+        record.description,
+        record.is_critical,
+        record.sort_order,
+        record.enabled,
+        record.created_at,
+      ]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.checklist_items) store.checklist_items = [];
+    store.checklist_items.push(record);
+    saveLocalStore(store);
+  }
+  return record;
+}
+
+export async function updateChecklistItem(
+  id: string,
+  updates: Partial<ChecklistItem>
+): Promise<ChecklistItem | null> {
+  const { isPostgres } = await checkConnection();
+
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT * FROM tracker_checklist_items WHERE id = $1", [id]);
+    if (res.rows.length === 0) return null;
+    const ex = res.rows[0];
+    const updated: ChecklistItem = {
+      id: ex.id,
+      title: updates.title !== undefined ? updates.title : ex.title,
+      category: updates.category !== undefined ? updates.category : ex.category,
+      description: updates.description !== undefined ? updates.description : ex.description || "",
+      is_critical: updates.is_critical !== undefined ? Boolean(updates.is_critical) : Boolean(ex.is_critical),
+      sort_order: updates.sort_order !== undefined ? Number(updates.sort_order) : Number(ex.sort_order || 0),
+      enabled: updates.enabled !== undefined ? Boolean(updates.enabled) : ex.enabled !== false,
+      created_at: new Date(ex.created_at).toISOString(),
+    };
+    await p.query(
+      `UPDATE tracker_checklist_items SET
+        title = $1, category = $2, description = $3, is_critical = $4, sort_order = $5, enabled = $6
+       WHERE id = $7`,
+      [
+        updated.title,
+        updated.category,
+        updated.description,
+        updated.is_critical,
+        updated.sort_order,
+        updated.enabled,
+        id,
+      ]
+    );
+    return updated;
+  } else {
+    const store = loadLocalStore();
+    if (!store.checklist_items) return null;
+    const idx = store.checklist_items.findIndex((i) => i.id === id);
+    if (idx === -1) return null;
+    store.checklist_items[idx] = { ...store.checklist_items[idx], ...updates };
+    saveLocalStore(store);
+    return store.checklist_items[idx];
+  }
+}
+
+export async function deleteChecklistItem(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("DELETE FROM tracker_checklist_items WHERE id = $1", [id]);
+    return (res.rowCount || 0) > 0;
+  } else {
+    const store = loadLocalStore();
+    if (!store.checklist_items) return false;
+    const before = store.checklist_items.length;
+    store.checklist_items = store.checklist_items.filter((i) => i.id !== id);
+    if (store.checklist_items.length !== before) {
+      saveLocalStore(store);
+      return true;
+    }
+    return false;
+  }
+}
+
+export async function resetDefaultChecklistItems(): Promise<ChecklistItem[]> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    for (const item of DEFAULT_CHECKLIST_SEED) {
+      await p.query(
+        `INSERT INTO tracker_checklist_items (id, title, category, description, is_critical, sort_order, enabled, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           category = EXCLUDED.category,
+           description = EXCLUDED.description,
+           is_critical = EXCLUDED.is_critical,
+           sort_order = EXCLUDED.sort_order,
+           enabled = TRUE`,
+        [item.id, item.title, item.category, item.description, item.is_critical, item.sort_order, item.enabled]
+      );
+    }
+    return getChecklistItems();
+  } else {
+    const store = loadLocalStore();
+    const existingIds = new Set((store.checklist_items || []).map((i) => i.id));
+    if (!store.checklist_items) store.checklist_items = [];
+    for (const item of DEFAULT_CHECKLIST_SEED) {
+      if (!existingIds.has(item.id)) {
+        store.checklist_items.push({ ...item, created_at: new Date().toISOString() });
+      }
+    }
+    saveLocalStore(store);
+    return getChecklistItems();
+  }
+}
+
+export async function getChecklistLogs(accountId?: string, limit = 60): Promise<ChecklistLog[]> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    let query = "SELECT * FROM tracker_checklist_logs WHERE 1=1";
+    const vals: any[] = [];
+    let idx = 1;
+    if (accountId && accountId !== "ALL") {
+      if (accountId === "acc_default") {
+        query += ` AND (account_id = $${idx++} OR account_id IS NULL OR account_id = '')`;
+        vals.push(accountId);
+      } else {
+        query += ` AND account_id = $${idx++}`;
+        vals.push(accountId);
+      }
+    }
+    query += ` ORDER BY created_at DESC LIMIT $${idx++}`;
+    vals.push(limit);
+
+    const res = await p.query(query, vals);
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      account_id: r.account_id || "acc_default",
+      symbol: r.symbol || "",
+      direction: r.direction === "SHORT" ? "SHORT" : "LONG",
+      checked_ids: typeof r.checked_ids === "string" ? JSON.parse(r.checked_ids || "[]") : r.checked_ids || [],
+      total_items: Number(r.total_items || 0),
+      critical_passed: Boolean(r.critical_passed),
+      score: Number(r.score || 0),
+      sentiment_verdict: r.sentiment_verdict || "",
+      notes: r.notes || "",
+      created_at: new Date(r.created_at).toISOString(),
+    }));
+  } else {
+    const store = loadLocalStore();
+    let logs = [...(store.checklist_logs || [])];
+    if (accountId && accountId !== "ALL") {
+      logs = logs.filter((l) => (l.account_id || "acc_default") === accountId);
+    }
+    return logs
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .slice(0, limit);
+  }
+}
+
+export async function createChecklistLog(log: ChecklistLog): Promise<ChecklistLog> {
+  const { isPostgres } = await checkConnection();
+  const accountId = log.account_id && log.account_id !== "ALL" ? log.account_id : "acc_default";
+  const record: ChecklistLog = {
+    ...log,
+    account_id: accountId,
+    symbol: (log.symbol || "").trim().toUpperCase(),
+    direction: log.direction === "SHORT" ? "SHORT" : "LONG",
+    checked_ids: Array.isArray(log.checked_ids) ? log.checked_ids : [],
+    total_items: Number(log.total_items || 0),
+    critical_passed: Boolean(log.critical_passed),
+    score: Number(log.score || 0),
+    sentiment_verdict: log.sentiment_verdict || "",
+    notes: log.notes || "",
+    created_at: log.created_at || new Date().toISOString(),
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_checklist_logs (
+        id, account_id, symbol, direction, checked_ids, total_items, critical_passed, score, sentiment_verdict, notes, created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        record.id,
+        record.account_id,
+        record.symbol,
+        record.direction,
+        JSON.stringify(record.checked_ids),
+        record.total_items,
+        record.critical_passed,
+        record.score,
+        record.sentiment_verdict,
+        record.notes,
+        record.created_at,
+      ]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.checklist_logs) store.checklist_logs = [];
+    store.checklist_logs.unshift(record);
+    saveLocalStore(store);
+  }
+  return record;
+}
+
+export async function deleteChecklistLog(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("DELETE FROM tracker_checklist_logs WHERE id = $1", [id]);
+    return (res.rowCount || 0) > 0;
+  } else {
+    const store = loadLocalStore();
+    if (!store.checklist_logs) return false;
+    const before = store.checklist_logs.length;
+    store.checklist_logs = store.checklist_logs.filter((l) => l.id !== id);
+    if (store.checklist_logs.length !== before) {
       saveLocalStore(store);
       return true;
     }

@@ -3,7 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
-import { Trade, TradeDirection, TradeStatus } from "@/lib/types";
+import { Trade, TradeDirection, TradeStatus, ChecklistItem } from "@/lib/types";
+import { BEHAVIOR_TAGS, isHabitTag } from "@/lib/tradingMetrics";
 import { useAccounts } from "../providers/AccountProvider";
 import { toDateInputValue, calculateRR } from "@/lib/utils";
 import {
@@ -76,6 +77,12 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
   const [chartImage, setChartImage] = useState("");
   const [uploadingImage, setUploadingImage] = useState(false);
 
+  // Mistake / Habit Tags & Pre-Trade Checklist
+  const [mistakeTags, setMistakeTags] = useState<string[]>([]);
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  const [checkedRuleIds, setCheckedRuleIds] = useState<string[]>([]);
+  const [showChecklist, setShowChecklist] = useState(false);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,6 +93,15 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         .then((data) => {
           if (data.success && Array.isArray(data.providers)) {
             setProviders(data.providers.filter((p: any) => p.name.toLowerCase() !== "self"));
+          }
+        })
+        .catch(() => {});
+
+      fetch("/api/checklist")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.success && Array.isArray(data.items)) {
+            setChecklistItems(data.items.filter((i: ChecklistItem) => i.enabled !== false));
           }
         })
         .catch(() => {});
@@ -113,6 +129,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
       setTimeframe(editTrade.timeframe || "1h");
       setChartUrl(editTrade.chart_url || "");
       setChartImage(editTrade.chart_image || "");
+      setMistakeTags(Array.isArray(editTrade.mistake_tags) ? editTrade.mistake_tags : []);
+      setCheckedRuleIds([]);
+      setShowChecklist(false);
       if (editTrade.entry_price || editTrade.exit_price || editTrade.stop_loss) {
         setActiveMode("full");
       }
@@ -144,6 +163,9 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
     setTimeframe("1h");
     setChartUrl("");
     setChartImage("");
+    setMistakeTags([]);
+    setCheckedRuleIds([]);
+    setShowChecklist(false);
     setActiveMode("quick");
     setError(null);
   };
@@ -257,6 +279,11 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
         signal_provider: signalProvider.trim() || "Self",
         reason_entry: reasonEntry.trim(),
         reason_outcome: reasonOutcome.trim(),
+        mistake_tags: mistakeTags,
+        discipline_score:
+          checkedRuleIds.length > 0 && checklistItems.length > 0
+            ? Math.round((checkedRuleIds.length / checklistItems.length) * 100)
+            : editTrade?.discipline_score ?? null,
         entry_price: entryPrice ? parseFloat(entryPrice) : null,
         exit_price: exitPrice ? parseFloat(exitPrice) : null,
         stop_loss: stopLoss ? parseFloat(stopLoss) : null,
@@ -759,6 +786,96 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
             placeholder="What happened after entry? Good execution, closed early, slippage..."
             className="w-full rounded-xl bg-slate-900 border border-slate-700/80 p-2.5 text-xs text-slate-200 focus:border-sky-500 focus:outline-none leading-relaxed"
           />
+        </div>
+
+        {/* 1-Click Mistake / Habit Tags & Quick Pre-Trade Checklist */}
+        <div className="space-y-2.5 rounded-xl border border-slate-800 bg-slate-900/50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-amber-300">
+              Mistake & Habit Tags (Optional)
+            </span>
+            {checklistItems.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowChecklist((v) => !v)}
+                className="text-[11px] font-semibold text-sky-400 hover:text-sky-300 flex items-center gap-1"
+              >
+                {showChecklist ? "Hide Pre-Trade Checklist" : "Run Pre-Trade Checklist"}
+                {checkedRuleIds.length > 0 && (
+                  <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-mono">
+                    {Math.round((checkedRuleIds.length / checklistItems.length) * 100)}%
+                  </span>
+                )}
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {BEHAVIOR_TAGS.map((tag) => {
+              const active = mistakeTags.includes(tag.id);
+              const habit = isHabitTag(tag.id);
+              return (
+                <button
+                  key={tag.id}
+                  type="button"
+                  onClick={() =>
+                    setMistakeTags((prev) =>
+                      prev.includes(tag.id)
+                        ? prev.filter((x) => x !== tag.id)
+                        : [...prev, tag.id]
+                    )
+                  }
+                  className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold border transition-colors ${
+                    active
+                      ? habit
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
+                        : "bg-rose-500/20 text-rose-300 border-rose-500/50"
+                      : "bg-slate-950/80 text-slate-400 border-slate-800 hover:text-white"
+                  }`}
+                >
+                  {active ? "✓ " : "+ "}
+                  {tag.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {showChecklist && checklistItems.length > 0 && (
+            <div className="pt-2 border-t border-slate-800 space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] text-slate-400">
+                <span>Check rules verified before entering this trade:</span>
+                <span className="font-mono font-bold text-sky-300">
+                  Discipline Score: {Math.round((checkedRuleIds.length / checklistItems.length) * 100)}%
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                {checklistItems.map((rule) => {
+                  const checked = checkedRuleIds.includes(rule.id);
+                  return (
+                    <button
+                      key={rule.id}
+                      type="button"
+                      onClick={() =>
+                        setCheckedRuleIds((prev) =>
+                          prev.includes(rule.id)
+                            ? prev.filter((x) => x !== rule.id)
+                            : [...prev, rule.id]
+                        )
+                      }
+                      className={`text-left px-2.5 py-1.5 rounded-lg text-[11px] border transition-colors ${
+                        checked
+                          ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-200"
+                          : "bg-slate-950/60 border-slate-800 text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {checked ? "☑ " : "☐ "}
+                      {rule.title}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Direct Image / Chart Upload & Clipboard Paste (Ctrl+V) */}

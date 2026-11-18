@@ -36,6 +36,8 @@ const TradeSchema = z.object({
   chart_url: z.string().optional().default(""),
   chart_image: z.string().optional().default(""),
   tags: z.array(z.string()).optional().default([]),
+  mistake_tags: z.array(z.string()).optional().default([]),
+  discipline_score: z.coerce.number().min(0).max(100).optional().nullable(),
 });
 
 export async function GET(req: NextRequest) {
