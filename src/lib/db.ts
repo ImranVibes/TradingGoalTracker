@@ -83,9 +83,7 @@ function loadLocalStore(): LocalStore {
       }
       if (!parsed.signal_providers || parsed.signal_providers.length === 0) {
         parsed.signal_providers = [
-          { id: "sp_self", name: "Self", notes: "My own trades & setups", color: "sky", created_at: new Date().toISOString() },
-          { id: "sp_abc", name: "ABC Trader", notes: "Signals from ABC Trader", color: "violet", created_at: new Date().toISOString() },
-          { id: "sp_xyz", name: "XYZ Trader", notes: "Signals from XYZ Trader", color: "emerald", created_at: new Date().toISOString() }
+          { id: "sp_self", name: "Self", notes: "My own trades & setups", color: "sky", created_at: new Date().toISOString() }
         ];
       }
       if (!parsed.exchange_connections) {
@@ -114,9 +112,7 @@ function loadLocalStore(): LocalStore {
     goals: [],
     dailySummaries: {},
     signal_providers: [
-      { id: "sp_self", name: "Self", notes: "My own trades & setups", color: "sky", created_at: new Date().toISOString() },
-      { id: "sp_abc", name: "ABC Trader", notes: "Signals from ABC Trader", color: "violet", created_at: new Date().toISOString() },
-      { id: "sp_xyz", name: "XYZ Trader", notes: "Signals from XYZ Trader", color: "emerald", created_at: new Date().toISOString() }
+      { id: "sp_self", name: "Self", notes: "My own trades & setups", color: "sky", created_at: new Date().toISOString() }
     ],
     exchange_connections: [],
     settings: {
@@ -243,13 +239,13 @@ async function initPostgresTables(client: any) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
-    -- Seed default providers if table is empty
+    -- Seed only Self provider; never re-seed dummy traders
     INSERT INTO tracker_signal_providers (id, name, notes, color)
-    VALUES 
-      ('sp_self', 'Self', 'My own trades & setups', 'sky'),
-      ('sp_abc', 'ABC Trader', 'Signals from ABC Trader', 'violet'),
-      ('sp_xyz', 'XYZ Trader', 'Signals from XYZ Trader', 'emerald')
+    VALUES ('sp_self', 'Self', 'My own trades & setups', 'sky')
     ON CONFLICT (name) DO NOTHING;
+
+    -- Permanently remove previously auto-seeded dummy example traders
+    DELETE FROM tracker_signal_providers WHERE id IN ('sp_abc', 'sp_xyz');
 
     CREATE TABLE IF NOT EXISTS tracker_cashflows (
       id VARCHAR(64) PRIMARY KEY,
@@ -804,6 +800,66 @@ export async function deleteTradesBulk(ids: string[]): Promise<number> {
     if (ok) deleted++;
   }
   return deleted;
+}
+
+export async function updateTradesBulk(
+  ids: string[],
+  updates: { signal_provider?: string; account_id?: string }
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { isPostgres } = await checkConnection();
+
+  const provider =
+    updates.signal_provider !== undefined ? updates.signal_provider.trim() || "Self" : undefined;
+  const accountId =
+    updates.account_id !== undefined ? updates.account_id.trim() || "acc_default" : undefined;
+
+  if (provider && provider.toLowerCase() !== "self") {
+    await ensureSignalProviderExists(provider);
+  }
+
+  let updatedCount = 0;
+  if (isPostgres) {
+    const p = getPool();
+    const sets: string[] = [];
+    const vals: any[] = [];
+    let idx = 1;
+
+    if (provider !== undefined) {
+      sets.push(`signal_provider = $${idx++}`);
+      vals.push(provider);
+    }
+    if (accountId !== undefined) {
+      sets.push(`account_id = $${idx++}`);
+      vals.push(accountId);
+    }
+    if (sets.length === 0) return 0;
+    sets.push(`updated_at = NOW()`);
+    vals.push(ids);
+
+    const res = await p.query(
+      `UPDATE tracker_trades SET ${sets.join(", ")} WHERE id = ANY($${idx}::varchar[])`,
+      vals
+    );
+    updatedCount = res.rowCount || ids.length;
+  } else {
+    const store = loadLocalStore();
+    const idSet = new Set(ids);
+    store.trades = store.trades.map((t) => {
+      if (!idSet.has(t.id)) return t;
+      updatedCount++;
+      return {
+        ...t,
+        ...(provider !== undefined ? { signal_provider: provider } : {}),
+        ...(accountId !== undefined ? { account_id: accountId } : {}),
+        updated_at: new Date().toISOString(),
+      };
+    });
+    saveLocalStore(store);
+  }
+
+  await syncGoals();
+  return updatedCount;
 }
 
 export async function cleanupLegacyPartialFills(): Promise<number> {

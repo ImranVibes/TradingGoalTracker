@@ -174,7 +174,7 @@ export default function SignalsPage() {
                   Signal Providers & Trader Comparison
                 </h1>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Track, compare, and rank performance between your own trades and followed traders (ABC Trader, XYZ Trader).
+                  Track, compare, and rank performance between your own trades and followed signal providers.
                 </p>
               </div>
             </div>
@@ -758,7 +758,7 @@ export default function SignalsPage() {
               required
               value={newProviderName}
               onChange={(e) => setNewProviderName(e.target.value)}
-              placeholder="e.g. ABC Trader, XYZ Trader, London Scalper"
+              placeholder="Enter trader or signal channel name"
               className="w-full rounded-xl bg-slate-900 border border-slate-700/80 px-3 py-2 text-sm text-white focus:border-violet-500 focus:outline-none"
             />
           </div>

@@ -45,8 +45,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ success: false, error: "Goal not found" }, { status: 404 });
     }
 
-    // Quick-toggle a specific trade's P&L into/out of this goal
-    if (body.toggle_trade_id || body.add_trade_id || body.remove_trade_id) {
+    // Quick-toggle or bulk-add specific trades' P&L into/out of this goal
+    if (body.toggle_trade_id || body.add_trade_id || body.remove_trade_id || Array.isArray(body.add_trade_ids)) {
       const currentLinked = new Set(existing.linked_trade_ids || []);
       if (body.toggle_trade_id) {
         if (currentLinked.has(body.toggle_trade_id)) {
@@ -56,6 +56,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         }
       }
       if (body.add_trade_id) currentLinked.add(body.add_trade_id);
+      if (Array.isArray(body.add_trade_ids)) {
+        for (const tid of body.add_trade_ids) {
+          if (typeof tid === "string") currentLinked.add(tid);
+        }
+      }
       if (body.remove_trade_id) currentLinked.delete(body.remove_trade_id);
 
       const updated = await updateGoal(params.id, {

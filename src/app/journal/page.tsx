@@ -51,6 +51,7 @@ export default function JournalPage() {
 
   const [trades, setTrades] = useState<Trade[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [registeredProviders, setRegisteredProviders] = useState<string[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [marketFilter, setMarketFilter] = useState("ALL");
@@ -60,9 +61,10 @@ export default function JournalPage() {
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
 
-  // Selection for bulk delete (permanently excludes from future syncs)
+  // Selection for bulk actions (assign trader, move account, add to goal, or delete)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
 
   // Sync & Legacy cleanup state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -82,16 +84,112 @@ export default function JournalPage() {
         activeAccountId && activeAccountId !== "ALL"
           ? `?account_id=${encodeURIComponent(activeAccountId)}`
           : "";
-      const [tradesRes, goalsRes] = await Promise.all([
+      const [tradesRes, goalsRes, providersRes] = await Promise.all([
         fetch(`/api/trades${qs}`).then((r) => r.json()),
         fetch("/api/goals").then((r) => r.json()),
+        fetch("/api/providers").then((r) => r.json()),
       ]);
       if (tradesRes.success) setTrades(tradesRes.trades);
       if (goalsRes.success) setGoals(goalsRes.goals);
+      if (providersRes.success && Array.isArray(providersRes.providers)) {
+        setRegisteredProviders(
+          providersRes.providers
+            .map((p: any) => p.name?.trim())
+            .filter((n: string) => Boolean(n && n.toLowerCase() !== "self"))
+        );
+      }
     } catch (err) {
       console.error(err);
     }
   }, [activeAccountId]);
+
+  // 1-Click instant Signal Provider assignment right on the card (optimistic update)
+  const handleAssignProvider = async (tradeId: string, providerName: string) => {
+    const clean = providerName.trim() || "Self";
+    setTrades((prev) =>
+      prev.map((t) => (t.id === tradeId ? { ...t, signal_provider: clean } : t))
+    );
+    try {
+      await fetch(`/api/trades/${tradeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ signal_provider: clean }),
+      });
+    } catch (err) {
+      console.error(err);
+      await fetchTrades();
+    }
+  };
+
+  const handleBulkAssignProvider = async (providerName: string) => {
+    if (!providerName || selectedIds.length === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      const res = await fetch("/api/trades", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds, signal_provider: providerName }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusBanner(`Assigned ${selectedIds.length} position(s) to "${providerName}"!`);
+        setSelectedIds([]);
+        await fetchTrades();
+        setTimeout(() => setStatusBanner(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  const handleBulkMoveAccount = async (targetAccId: string) => {
+    if (!targetAccId || selectedIds.length === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      const res = await fetch("/api/trades", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds, account_id: targetAccId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const accName = accounts.find((a) => a.id === targetAccId)?.name || "Account";
+        setStatusBanner(`Moved ${selectedIds.length} position(s) to "${accName}"!`);
+        setSelectedIds([]);
+        await Promise.all([fetchTrades(), refreshAccounts()]);
+        setTimeout(() => setStatusBanner(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
+
+  const handleBulkAddToGoal = async (goalId: string) => {
+    if (!goalId || selectedIds.length === 0) return;
+    setIsBulkUpdating(true);
+    try {
+      const res = await fetch(`/api/goals/${goalId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ add_trade_ids: selectedIds }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusBanner(`Added ${selectedIds.length} position(s) to goal "${data.goal?.title || "Goal"}"!`);
+        setSelectedIds([]);
+        await fetchTrades();
+        setTimeout(() => setStatusBanner(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsBulkUpdating(false);
+    }
+  };
 
   const handleToggleTradeGoal = async (goalId: string, tradeId: string) => {
     if (!goalId) return;
@@ -243,11 +341,12 @@ export default function JournalPage() {
   ).length;
 
   const knownProviders = Array.from(
-    new Set(
-      trades
+    new Set([
+      ...registeredProviders,
+      ...trades
         .map((t) => t.signal_provider?.trim())
-        .filter((p): p is string => Boolean(p && p.toLowerCase() !== "self"))
-    )
+        .filter((p): p is string => Boolean(p && p.toLowerCase() !== "self")),
+    ])
   );
 
   const knownExchanges = Array.from(
@@ -694,7 +793,7 @@ export default function JournalPage() {
 
               {/* Bulk Selection Bar */}
               {filtered.length > 0 && (
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={toggleSelectAllFiltered}
                     className="px-2.5 py-1.5 rounded-lg text-xs text-slate-400 hover:text-white bg-slate-900 border border-slate-800 flex items-center gap-1.5"
@@ -708,17 +807,91 @@ export default function JournalPage() {
                   </button>
 
                   {selectedIds.length > 0 && (
-                    <button
-                      onClick={handleBulkDelete}
-                      disabled={isBulkDeleting}
-                      className="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 flex items-center gap-1.5 disabled:opacity-50"
-                      title="Delete selected positions permanently (they will never be re-imported)"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      {isBulkDeleting
-                        ? "Deleting..."
-                        : `Delete ${selectedIds.length} (Won't Re-Import)`}
-                    </button>
+                    <>
+                      {/* Bulk Assign Signal Provider */}
+                      <div className="flex items-center gap-1.5 bg-violet-500/15 border border-violet-500/40 rounded-lg px-2 py-1">
+                        <Radio className="w-3 h-3 text-violet-400" />
+                        <select
+                          value=""
+                          disabled={isBulkUpdating}
+                          onChange={(e) => {
+                            if (e.target.value) handleBulkAssignProvider(e.target.value);
+                          }}
+                          className="bg-transparent text-xs font-semibold text-violet-200 focus:outline-none cursor-pointer"
+                          title="Assign all selected positions to a signal trader in 1 click"
+                        >
+                          <option value="" className="bg-slate-900 text-slate-400">
+                            Assign Trader ({selectedIds.length})...
+                          </option>
+                          <option value="Self" className="bg-slate-900 text-white">
+                            👤 Self (My Own)
+                          </option>
+                          {knownProviders.map((p) => (
+                            <option key={p} value={p} className="bg-slate-900 text-white">
+                              📡 {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Bulk Move to Account */}
+                      {accounts.length > 1 && (
+                        <div className="flex items-center gap-1.5 bg-sky-500/15 border border-sky-500/40 rounded-lg px-2 py-1">
+                          <Layers className="w-3 h-3 text-sky-400" />
+                          <select
+                            value=""
+                            disabled={isBulkUpdating}
+                            onChange={(e) => {
+                              if (e.target.value) handleBulkMoveAccount(e.target.value);
+                            }}
+                            className="bg-transparent text-xs font-semibold text-sky-200 focus:outline-none cursor-pointer"
+                          >
+                            <option value="" className="bg-slate-900 text-slate-400">
+                              Move Account...
+                            </option>
+                            {accounts.map((acc) => (
+                              <option key={acc.id} value={acc.id} className="bg-slate-900 text-white">
+                                {acc.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {/* Bulk Add to Goal */}
+                      {goals.length > 0 && (
+                        <div className="flex items-center gap-1.5 bg-emerald-500/15 border border-emerald-500/40 rounded-lg px-2 py-1">
+                          <Target className="w-3 h-3 text-emerald-400" />
+                          <select
+                            value=""
+                            disabled={isBulkUpdating}
+                            onChange={(e) => {
+                              if (e.target.value) handleBulkAddToGoal(e.target.value);
+                            }}
+                            className="bg-transparent text-xs font-semibold text-emerald-200 focus:outline-none cursor-pointer"
+                          >
+                            <option value="" className="bg-slate-900 text-slate-400">
+                              Add to Goal...
+                            </option>
+                            {goals.map((g) => (
+                              <option key={g.id} value={g.id} className="bg-slate-900 text-white">
+                                {g.title}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <button
+                        onClick={handleBulkDelete}
+                        disabled={isBulkDeleting}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 flex items-center gap-1.5 disabled:opacity-50"
+                        title="Delete selected positions permanently (they will never be re-imported)"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        {isBulkDeleting ? "Deleting..." : `Delete (${selectedIds.length})`}
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -846,17 +1019,47 @@ export default function JournalPage() {
                               </span>
                             )}
 
-                            {trade.signal_provider && trade.signal_provider.toLowerCase() !== "self" ? (
-                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-violet-500/15 text-violet-300 border border-violet-500/30 font-medium flex items-center gap-1">
-                                <Radio className="w-2.5 h-2.5 text-violet-400" />
-                                {trade.signal_provider}
-                              </span>
-                            ) : (
-                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 font-medium flex items-center gap-1">
-                                <User className="w-2.5 h-2.5 text-slate-400" />
-                                Self
-                              </span>
-                            )}
+                            {/* 1-Click Inline Signal Provider Selector (No Edit Modal Needed!) */}
+                            <div
+                              className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+                                trade.signal_provider && trade.signal_provider.toLowerCase() !== "self"
+                                  ? "bg-violet-500/15 text-violet-200 border-violet-500/40"
+                                  : "bg-slate-800/90 text-slate-300 border-slate-700 hover:border-slate-500"
+                              }`}
+                              title="1-click assign this position to a trader / signal provider"
+                            >
+                              {trade.signal_provider && trade.signal_provider.toLowerCase() !== "self" ? (
+                                <Radio className="w-2.5 h-2.5 text-violet-400 flex-shrink-0" />
+                              ) : (
+                                <User className="w-2.5 h-2.5 text-slate-400 flex-shrink-0" />
+                              )}
+                              <select
+                                value={trade.signal_provider || "Self"}
+                                onChange={(e) => {
+                                  if (e.target.value === "__NEW__") {
+                                    const custom = prompt("Enter new trader / signal provider name:");
+                                    if (custom && custom.trim()) {
+                                      handleAssignProvider(trade.id, custom.trim());
+                                    }
+                                  } else {
+                                    handleAssignProvider(trade.id, e.target.value);
+                                  }
+                                }}
+                                className="bg-transparent focus:outline-none cursor-pointer pr-0.5 text-[11px] font-medium"
+                              >
+                                <option value="Self" className="bg-slate-900 text-white">
+                                  Self
+                                </option>
+                                {knownProviders.map((p) => (
+                                  <option key={p} value={p} className="bg-slate-900 text-white">
+                                    {p}
+                                  </option>
+                                ))}
+                                <option value="__NEW__" className="bg-slate-900 text-sky-400">
+                                  + New Trader...
+                                </option>
+                              </select>
+                            </div>
 
                             {trade.chart_image && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20 font-medium flex items-center gap-1">

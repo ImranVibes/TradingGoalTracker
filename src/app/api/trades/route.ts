@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getTrades, createTrade, deleteTradesBulk } from "@/lib/db";
+import { getTrades, createTrade, deleteTradesBulk, updateTradesBulk } from "@/lib/db";
 import { Trade } from "@/lib/types";
 import { z } from "zod";
 
@@ -116,6 +116,28 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return NextResponse.json({ success: false, error: error.errors[0].message }, { status: 400 });
     }
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
+}
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const ids: string[] = Array.isArray(body.ids) ? body.ids : [];
+    if (ids.length === 0) {
+      return NextResponse.json({ success: false, error: "No trade IDs provided" }, { status: 400 });
+    }
+    const updates: { signal_provider?: string; account_id?: string } = {};
+    if (body.signal_provider !== undefined) updates.signal_provider = String(body.signal_provider);
+    if (body.account_id !== undefined) updates.account_id = String(body.account_id);
+
+    const updated = await updateTradesBulk(ids, updates);
+    return NextResponse.json({
+      success: true,
+      updated,
+      message: `Updated ${updated} position(s).`,
+    });
+  } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
 }

@@ -466,7 +466,7 @@ export const TradeFormModal: React.FC<TradeFormModalProps> = ({
                 type="text"
                 value={signalProvider === "Self" ? "" : signalProvider}
                 onChange={(e) => setSignalProvider(e.target.value)}
-                placeholder="Enter Trader Name (e.g. ABC Trader, John FX...)"
+                placeholder="Enter Trader or Channel Name"
                 className="flex-1 rounded-lg bg-slate-950 border border-indigo-500/50 px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none"
                 autoFocus
               />

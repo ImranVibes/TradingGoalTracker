@@ -627,6 +627,7 @@ export default function DashboardPage() {
                 setEditTrade(null);
                 setIsTradeModalOpen(true);
               }}
+              onUpdated={fetchData}
             />
           </div>
         </main>
