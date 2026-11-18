@@ -14,9 +14,12 @@ const ProviderSchema = z.object({
 
 export async function GET(req: NextRequest) {
   try {
+    const { searchParams } = new URL(req.url);
+    const account_id = searchParams.get("account_id") || undefined;
+
     const [providers, stats] = await Promise.all([
       getSignalProviders(),
-      getSignalProviderStats(),
+      getSignalProviderStats(account_id),
     ]);
 
     return NextResponse.json({

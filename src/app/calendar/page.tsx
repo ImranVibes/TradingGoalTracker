@@ -9,11 +9,13 @@ import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { DailySummary, Trade, Cashflow } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import { CalendarDays, TrendingUp, TrendingDown, ArrowDownLeft, Calendar } from "lucide-react";
+import { CalendarDays, Layers } from "lucide-react";
 
 export default function CalendarPage() {
+  const { activeAccountId, activeAccount } = useAccounts();
   const [summaries, setSummaries] = useState<Record<string, DailySummary>>({});
   const [trades, setTrades] = useState<Trade[]>([]);
   const [cashflows, setCashflows] = useState<Cashflow[]>([]);
@@ -27,10 +29,14 @@ export default function CalendarPage() {
 
   const fetchData = useCallback(async () => {
     try {
+      const accParam =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
       const [sumRes, tradesRes, cashRes] = await Promise.all([
-        fetch("/api/daily").then((r) => r.json()),
-        fetch("/api/trades").then((r) => r.json()),
-        fetch("/api/cashflow").then((r) => r.json()),
+        fetch(`/api/daily${accParam}`).then((r) => r.json()),
+        fetch(`/api/trades${accParam}`).then((r) => r.json()),
+        fetch(`/api/cashflow${accParam}`).then((r) => r.json()),
       ]);
 
       if (sumRes.success) setSummaries(sumRes.summaries);
@@ -39,7 +45,7 @@ export default function CalendarPage() {
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchData();
@@ -73,9 +79,15 @@ export default function CalendarPage() {
                 <CalendarDays className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight">
-                  Daily Earnings & Calendar Ledger
-                </h1>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-2xl font-bold text-white tracking-tight">
+                    Daily Earnings & Calendar Ledger
+                  </h1>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                    <Layers className="w-3 h-3" />
+                    {activeAccount ? activeAccount.name : "All Accounts (Combined)"}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-400">
                   Track how much you made and lost each day, with withdrawals and spendings. Click any date to drill in.
                 </p>

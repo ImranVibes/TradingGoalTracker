@@ -8,6 +8,7 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { StatCard } from "@/components/dashboard/StatCard";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { Cashflow } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import {
@@ -17,9 +18,11 @@ import {
   ArrowUpRight,
   PlusCircle,
   PiggyBank,
+  Layers,
 } from "lucide-react";
 
 export default function CashflowPage() {
+  const { activeAccountId, activeAccount, refreshAccounts } = useAccounts();
   const [cashflows, setCashflows] = useState<Cashflow[]>([]);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
@@ -27,13 +30,17 @@ export default function CashflowPage() {
 
   const fetchCashflow = useCallback(async () => {
     try {
-      const res = await fetch("/api/cashflow");
+      const accParam =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
+      const res = await fetch(`/api/cashflow${accParam}`);
       const data = await res.json();
       if (data.success) setCashflows(data.cashflows);
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchCashflow();
@@ -43,6 +50,7 @@ export default function CashflowPage() {
     try {
       await fetch(`/api/cashflow/${id}`, { method: "DELETE" });
       await fetchCashflow();
+      refreshAccounts();
     } catch (err) {
       console.error(err);
     }
@@ -85,9 +93,15 @@ export default function CashflowPage() {
                 <Wallet className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight">
-                  Cashflow & Life Spending
-                </h1>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-2xl font-bold text-white tracking-tight">
+                    Cashflow & Life Spending
+                  </h1>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-500/10 text-amber-300 border border-amber-500/20">
+                    <Layers className="w-3 h-3" />
+                    {activeAccount ? activeAccount.name : "All Accounts (Combined)"}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-400">
                   Track how much you withdraw from trading, how much you spend, and what it was spent on
                 </p>
@@ -172,7 +186,10 @@ export default function CashflowPage() {
       <CashflowFormModal
         isOpen={isCashflowModalOpen}
         onClose={() => setIsCashflowModalOpen(false)}
-        onSuccess={() => fetchCashflow()}
+        onSuccess={() => {
+          fetchCashflow();
+          refreshAccounts();
+        }}
       />
 
       <TradeFormModal

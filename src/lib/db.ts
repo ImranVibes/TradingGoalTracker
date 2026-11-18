@@ -14,6 +14,7 @@ import {
   DrawdownStats,
   TradingAccount,
   CustomIndicator,
+  TradingNote,
 } from "./types";
 import { BinanceClient, BybitClient, ExchangeSyncResult } from "./exchanges";
 
@@ -56,6 +57,7 @@ interface LocalStore {
   signal_providers: SignalProvider[];
   exchange_connections: ExchangeConnection[];
   indicators?: CustomIndicator[];
+  notes?: TradingNote[];
   settings: Record<string, any>;
 }
 
@@ -90,6 +92,9 @@ function loadLocalStore(): LocalStore {
       }
       if (!parsed.exchange_connections) {
         parsed.exchange_connections = [];
+      }
+      if (!parsed.notes) {
+        parsed.notes = [];
       }
       if (!parsed.settings) {
         parsed.settings = {
@@ -315,9 +320,26 @@ async function initPostgresTables(client: any) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_trades_exchange_trade_id ON tracker_trades(exchange_trade_id) WHERE exchange_trade_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_tracker_cashflow_date ON tracker_cashflows(date);
     ALTER TABLE tracker_cashflows ADD COLUMN IF NOT EXISTS account_id VARCHAR(64) DEFAULT 'acc_default';
-    ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS account_id VARCHAR(64) DEFAULT 'ALL';
+    ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS account_id VARCHAR(64) DEFAULT 'acc_default';
     ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS tracking_mode VARCHAR(32) DEFAULT 'AUTO_DATE';
     ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS linked_trade_ids TEXT DEFAULT '[]';
+
+    CREATE TABLE IF NOT EXISTS tracker_notes (
+      id VARCHAR(64) PRIMARY KEY,
+      account_id VARCHAR(64) NOT NULL DEFAULT 'acc_default',
+      title VARCHAR(200) NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      category VARCHAR(48) NOT NULL DEFAULT 'GENERAL',
+      symbol VARCHAR(32) DEFAULT '',
+      tags TEXT DEFAULT '[]',
+      is_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+      note_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      image_url TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+    CREATE INDEX IF NOT EXISTS idx_tracker_notes_account_id ON tracker_notes(account_id);
+    CREATE INDEX IF NOT EXISTS idx_tracker_notes_date ON tracker_notes(note_date);
   `);
 }
 
@@ -915,7 +937,12 @@ export async function cleanupLegacyPartialFills(): Promise<number> {
 // -----------------------------------------------------------------------------
 // CASHFLOW API
 // -----------------------------------------------------------------------------
-export async function getCashflows(filters?: { type?: string; startDate?: string; endDate?: string }): Promise<Cashflow[]> {
+export async function getCashflows(filters?: {
+  type?: string;
+  startDate?: string;
+  endDate?: string;
+  account_id?: string;
+}): Promise<Cashflow[]> {
   const { isPostgres } = await checkConnection();
 
   if (isPostgres) {
@@ -924,6 +951,15 @@ export async function getCashflows(filters?: { type?: string; startDate?: string
     const values: any[] = [];
     let idx = 1;
 
+    if (filters?.account_id && filters.account_id !== "ALL") {
+      if (filters.account_id === "acc_default") {
+        query += ` AND (account_id = $${idx++} OR account_id IS NULL OR account_id = '')`;
+        values.push(filters.account_id);
+      } else {
+        query += ` AND account_id = $${idx++}`;
+        values.push(filters.account_id);
+      }
+    }
     if (filters?.type) {
       query += ` AND type = $${idx++}`;
       values.push(filters.type);
@@ -941,14 +977,22 @@ export async function getCashflows(filters?: { type?: string; startDate?: string
     const res = await p.query(query, values);
     return res.rows.map((r: any) => ({
       ...r,
+      account_id: r.account_id || "acc_default",
+      amount: Number(r.amount || 0),
       date: new Date(r.date).toISOString(),
       created_at: new Date(r.created_at).toISOString(),
       updated_at: new Date(r.updated_at).toISOString(),
     }));
   } else {
     const store = loadLocalStore();
-    let result = [...store.cashflows];
+    let result = [...store.cashflows].map((c) => ({
+      ...c,
+      account_id: c.account_id || "acc_default",
+    }));
 
+    if (filters?.account_id && filters.account_id !== "ALL") {
+      result = result.filter((c) => (c.account_id || "acc_default") === filters.account_id);
+    }
     if (filters?.type) {
       result = result.filter((c) => c.type === filters.type);
     }
@@ -965,36 +1009,40 @@ export async function getCashflows(filters?: { type?: string; startDate?: string
 
 export async function createCashflow(cashflow: Cashflow): Promise<Cashflow> {
   const { isPostgres } = await checkConnection();
+  const accountId =
+    cashflow.account_id && cashflow.account_id !== "ALL" ? cashflow.account_id : "acc_default";
+  const record: Cashflow = { ...cashflow, account_id: accountId };
 
   if (isPostgres) {
     const p = getPool();
     await p.query(
       `INSERT INTO tracker_cashflows (
-        id, type, amount, category, description, date, source, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        id, account_id, type, amount, category, description, date, source, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
       [
-        cashflow.id,
-        cashflow.type,
-        cashflow.amount,
-        cashflow.category,
-        cashflow.description || "",
-        cashflow.date,
-        cashflow.source || "Trading Account",
-        cashflow.created_at || new Date().toISOString(),
-        cashflow.updated_at || new Date().toISOString(),
+        record.id,
+        accountId,
+        record.type,
+        record.amount,
+        record.category,
+        record.description || "",
+        record.date,
+        record.source || "Trading Account",
+        record.created_at || new Date().toISOString(),
+        record.updated_at || new Date().toISOString(),
       ]
     );
   } else {
     const store = loadLocalStore();
-    store.cashflows.unshift(cashflow);
+    store.cashflows.unshift(record);
     saveLocalStore(store);
   }
 
-  const dateKey = cashflow.date.split("T")[0];
+  const dateKey = record.date.split("T")[0];
   await syncDailySummary(dateKey);
   await syncGoals();
 
-  return cashflow;
+  return record;
 }
 
 export async function deleteCashflow(id: string): Promise<boolean> {
@@ -1071,14 +1119,21 @@ export async function getGoals(accountId?: string): Promise<Goal[]> {
   }
 
   if (accountId && accountId !== "ALL") {
-    return goals.filter((g) => !g.account_id || g.account_id === "ALL" || g.account_id === accountId);
+    if (accountId === "acc_default") {
+      // Main account keeps legacy 'ALL' / unassigned goals plus its own goals
+      return goals.filter(
+        (g) => !g.account_id || g.account_id === "acc_default" || g.account_id === "ALL"
+      );
+    }
+    // Every other account acts like a completely separate workspace / blank slate
+    return goals.filter((g) => g.account_id === accountId);
   }
   return goals;
 }
 
 export async function createGoal(goal: Goal): Promise<Goal> {
   const { isPostgres } = await checkConnection();
-  const accountId = goal.account_id || "ALL";
+  const accountId = goal.account_id || "acc_default";
   const trackingMode = goal.tracking_mode === "MANUAL_TRADES" ? "MANUAL_TRADES" : "AUTO_DATE";
   const linkedIds = parseLinkedTradeIds(goal.linked_trade_ids);
 
@@ -1298,7 +1353,65 @@ export async function syncDailySummary(dateKey: string): Promise<void> {
   }
 }
 
-export async function getDailySummaries(month?: string): Promise<Record<string, DailySummary>> {
+export async function getDailySummaries(
+  month?: string,
+  accountId?: string
+): Promise<Record<string, DailySummary>> {
+  // When scoped to a specific account, compute strictly from that account's trades & cashflows
+  // so each account has its own completely isolated Calendar (blank slate for new accounts).
+  if (accountId && accountId !== "ALL") {
+    const trades = await getTrades({ account_id: accountId });
+    const cashflows = await getCashflows({ account_id: accountId });
+    const result: Record<string, DailySummary> = {};
+
+    const ensureDay = (dateKey: string): DailySummary => {
+      if (!result[dateKey]) {
+        result[dateKey] = {
+          date: dateKey,
+          total_pnl: 0,
+          total_trades: 0,
+          wins: 0,
+          losses: 0,
+          breakeven: 0,
+          win_rate: 0,
+          total_withdrawn: 0,
+          total_spent: 0,
+          notes: "",
+        };
+      }
+      return result[dateKey];
+    };
+
+    for (const t of trades) {
+      const d = (t.trade_date || "").split("T")[0];
+      if (!d || (month && !d.startsWith(month))) continue;
+      const day = ensureDay(d);
+      day.total_pnl = Number((day.total_pnl + Number(t.pnl || 0)).toFixed(2));
+      day.total_trades += 1;
+      if (t.status === "WON") day.wins += 1;
+      else if (t.status === "LOST") day.losses += 1;
+      else if (t.status === "BREAKEVEN") day.breakeven += 1;
+    }
+
+    for (const c of cashflows) {
+      const d = (c.date || "").split("T")[0];
+      if (!d || (month && !d.startsWith(month))) continue;
+      const day = ensureDay(d);
+      if (c.type === "WITHDRAWAL") {
+        day.total_withdrawn = Number((day.total_withdrawn + Number(c.amount || 0)).toFixed(2));
+      } else if (c.type === "EXPENSE") {
+        day.total_spent = Number((day.total_spent + Number(c.amount || 0)).toFixed(2));
+      }
+    }
+
+    for (const day of Object.values(result)) {
+      day.win_rate =
+        day.total_trades > 0 ? Number(((day.wins / day.total_trades) * 100).toFixed(1)) : 0;
+    }
+
+    return result;
+  }
+
   const { isPostgres } = await checkConnection();
   const result: Record<string, DailySummary> = {};
 
@@ -2816,5 +2929,287 @@ export async function resetAuthAttempts(ip: string): Promise<void> {
     await p.query("DELETE FROM tracker_auth_attempts WHERE ip = $1", [ip]);
   } else {
     localAuthAttempts.delete(ip);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// TRADING NOTES API (ACCOUNT-SCOPED, SEARCHABLE, DATE-FILTERABLE)
+// -----------------------------------------------------------------------------
+function parseNoteTags(raw: any): string[] {
+  if (Array.isArray(raw)) return raw.map((x) => String(x).trim()).filter(Boolean);
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.map((x) => String(x).trim()).filter(Boolean);
+    } catch {
+      return raw
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    }
+  }
+  return [];
+}
+
+export async function getNotes(filters?: {
+  account_id?: string;
+  search?: string;
+  category?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<TradingNote[]> {
+  const { isPostgres } = await checkConnection();
+  let notes: TradingNote[] = [];
+
+  if (isPostgres) {
+    const p = getPool();
+    let query = "SELECT * FROM tracker_notes WHERE 1=1";
+    const values: any[] = [];
+    let idx = 1;
+
+    if (filters?.account_id && filters.account_id !== "ALL") {
+      if (filters.account_id === "acc_default") {
+        query += ` AND (account_id = $${idx++} OR account_id IS NULL OR account_id = '')`;
+        values.push(filters.account_id);
+      } else {
+        query += ` AND account_id = $${idx++}`;
+        values.push(filters.account_id);
+      }
+    }
+
+    if (filters?.category && filters.category !== "ALL") {
+      query += ` AND UPPER(category) = UPPER($${idx++})`;
+      values.push(filters.category);
+    }
+
+    if (filters?.startDate) {
+      query += ` AND note_date >= $${idx++}`;
+      values.push(filters.startDate);
+    }
+
+    if (filters?.endDate) {
+      query += ` AND note_date <= $${idx++}`;
+      values.push(filters.endDate);
+    }
+
+    if (filters?.search && filters.search.trim()) {
+      const term = `%${filters.search.trim()}%`;
+      query += ` AND (
+        title ILIKE $${idx} OR
+        content ILIKE $${idx} OR
+        symbol ILIKE $${idx} OR
+        category ILIKE $${idx} OR
+        tags ILIKE $${idx}
+      )`;
+      values.push(term);
+      idx++;
+    }
+
+    query += " ORDER BY is_pinned DESC, note_date DESC, created_at DESC";
+    const res = await p.query(query, values);
+    notes = res.rows.map((r: any) => ({
+      id: r.id,
+      account_id: r.account_id || "acc_default",
+      title: r.title,
+      content: r.content || "",
+      category: r.category || "GENERAL",
+      symbol: r.symbol || "",
+      tags: parseNoteTags(r.tags),
+      is_pinned: Boolean(r.is_pinned),
+      note_date: new Date(r.note_date).toISOString(),
+      image_url: r.image_url || "",
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : undefined,
+    }));
+  } else {
+    const store = loadLocalStore();
+    notes = [...(store.notes || [])].map((n) => ({
+      ...n,
+      account_id: n.account_id || "acc_default",
+      tags: parseNoteTags(n.tags),
+      is_pinned: Boolean(n.is_pinned),
+    }));
+
+    if (filters?.account_id && filters.account_id !== "ALL") {
+      notes = notes.filter((n) => (n.account_id || "acc_default") === filters.account_id);
+    }
+    if (filters?.category && filters.category !== "ALL") {
+      notes = notes.filter((n) => n.category.toUpperCase() === filters.category!.toUpperCase());
+    }
+    if (filters?.startDate) {
+      notes = notes.filter((n) => n.note_date >= filters.startDate!);
+    }
+    if (filters?.endDate) {
+      notes = notes.filter((n) => n.note_date <= filters.endDate!);
+    }
+    if (filters?.search && filters.search.trim()) {
+      const q = filters.search.trim().toLowerCase();
+      notes = notes.filter(
+        (n) =>
+          n.title.toLowerCase().includes(q) ||
+          n.content.toLowerCase().includes(q) ||
+          (n.symbol || "").toLowerCase().includes(q) ||
+          (n.category || "").toLowerCase().includes(q) ||
+          n.tags.some((t) => t.toLowerCase().includes(q))
+      );
+    }
+
+    notes.sort((a, b) => {
+      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+      const dateDiff = new Date(b.note_date).getTime() - new Date(a.note_date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
+  }
+
+  return notes;
+}
+
+export async function createNote(note: TradingNote): Promise<TradingNote> {
+  const { isPostgres } = await checkConnection();
+  const accountId = note.account_id && note.account_id !== "ALL" ? note.account_id : "acc_default";
+  const tags = parseNoteTags(note.tags);
+  const nowIso = new Date().toISOString();
+  const record: TradingNote = {
+    ...note,
+    account_id: accountId,
+    symbol: (note.symbol || "").trim().toUpperCase(),
+    category: (note.category || "GENERAL").trim(),
+    tags,
+    is_pinned: Boolean(note.is_pinned),
+    note_date: note.note_date ? new Date(note.note_date).toISOString() : nowIso,
+    image_url: note.image_url || "",
+    created_at: note.created_at || nowIso,
+    updated_at: nowIso,
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_notes (
+        id, account_id, title, content, category, symbol, tags, is_pinned, note_date, image_url, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [
+        record.id,
+        record.account_id,
+        record.title,
+        record.content,
+        record.category,
+        record.symbol,
+        JSON.stringify(record.tags),
+        record.is_pinned,
+        record.note_date,
+        record.image_url,
+        record.created_at,
+        record.updated_at,
+      ]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.notes) store.notes = [];
+    store.notes.unshift(record);
+    saveLocalStore(store);
+  }
+
+  return record;
+}
+
+export async function updateNote(
+  id: string,
+  updates: Partial<TradingNote>
+): Promise<TradingNote | null> {
+  const { isPostgres } = await checkConnection();
+  const nowIso = new Date().toISOString();
+
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT * FROM tracker_notes WHERE id = $1", [id]);
+    if (res.rows.length === 0) return null;
+    const existing = res.rows[0];
+
+    const updated: TradingNote = {
+      id: existing.id,
+      account_id:
+        updates.account_id !== undefined && updates.account_id !== "ALL"
+          ? updates.account_id
+          : existing.account_id || "acc_default",
+      title: updates.title !== undefined ? updates.title : existing.title,
+      content: updates.content !== undefined ? updates.content : existing.content,
+      category: updates.category !== undefined ? updates.category : existing.category || "GENERAL",
+      symbol:
+        updates.symbol !== undefined
+          ? updates.symbol.trim().toUpperCase()
+          : existing.symbol || "",
+      tags: updates.tags !== undefined ? parseNoteTags(updates.tags) : parseNoteTags(existing.tags),
+      is_pinned: updates.is_pinned !== undefined ? Boolean(updates.is_pinned) : Boolean(existing.is_pinned),
+      note_date: updates.note_date
+        ? new Date(updates.note_date).toISOString()
+        : new Date(existing.note_date).toISOString(),
+      image_url: updates.image_url !== undefined ? updates.image_url : existing.image_url || "",
+      created_at: new Date(existing.created_at).toISOString(),
+      updated_at: nowIso,
+    };
+
+    await p.query(
+      `UPDATE tracker_notes SET
+        account_id = $1, title = $2, content = $3, category = $4, symbol = $5,
+        tags = $6, is_pinned = $7, note_date = $8, image_url = $9, updated_at = $10
+       WHERE id = $11`,
+      [
+        updated.account_id,
+        updated.title,
+        updated.content,
+        updated.category,
+        updated.symbol,
+        JSON.stringify(updated.tags),
+        updated.is_pinned,
+        updated.note_date,
+        updated.image_url,
+        updated.updated_at,
+        id,
+      ]
+    );
+    return updated;
+  } else {
+    const store = loadLocalStore();
+    if (!store.notes) return null;
+    const idx = store.notes.findIndex((n) => n.id === id);
+    if (idx === -1) return null;
+    const existing = store.notes[idx];
+    const updated: TradingNote = {
+      ...existing,
+      ...updates,
+      account_id:
+        updates.account_id !== undefined && updates.account_id !== "ALL"
+          ? updates.account_id
+          : existing.account_id || "acc_default",
+      symbol:
+        updates.symbol !== undefined ? updates.symbol.trim().toUpperCase() : existing.symbol || "",
+      tags: updates.tags !== undefined ? parseNoteTags(updates.tags) : parseNoteTags(existing.tags),
+      note_date: updates.note_date ? new Date(updates.note_date).toISOString() : existing.note_date,
+      updated_at: nowIso,
+    };
+    store.notes[idx] = updated;
+    saveLocalStore(store);
+    return updated;
+  }
+}
+
+export async function deleteNote(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("DELETE FROM tracker_notes WHERE id = $1", [id]);
+    return (res.rowCount || 0) > 0;
+  } else {
+    const store = loadLocalStore();
+    if (!store.notes) return false;
+    const before = store.notes.length;
+    store.notes = store.notes.filter((n) => n.id !== id);
+    if (store.notes.length !== before) {
+      saveLocalStore(store);
+      return true;
+    }
+    return false;
   }
 }

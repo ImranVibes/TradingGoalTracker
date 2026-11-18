@@ -6,6 +6,7 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 const CashflowSchema = z.object({
+  account_id: z.string().optional().default("acc_default"),
   type: z.enum(["WITHDRAWAL", "EXPENSE", "DEPOSIT"]),
   amount: z.coerce.number().positive("Amount must be greater than zero"),
   category: z.string().min(1, "Category is required").max(64),
@@ -20,8 +21,9 @@ export async function GET(req: NextRequest) {
     const type = searchParams.get("type") || undefined;
     const startDate = searchParams.get("startDate") || undefined;
     const endDate = searchParams.get("endDate") || undefined;
+    const account_id = searchParams.get("account_id") || undefined;
 
-    const items = await getCashflows({ type, startDate, endDate });
+    const items = await getCashflows({ type, startDate, endDate, account_id });
     return NextResponse.json({ success: true, count: items.length, cashflows: items });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

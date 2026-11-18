@@ -7,8 +7,9 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const month = searchParams.get("month") || undefined;
+    const account_id = searchParams.get("account_id") || undefined;
 
-    const summaries = await getDailySummaries(month);
+    const summaries = await getDailySummaries(month, account_id);
     return NextResponse.json({ success: true, summaries });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

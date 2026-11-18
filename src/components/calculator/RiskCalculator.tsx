@@ -1,15 +1,23 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { formatCurrency } from "@/lib/utils";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { Calculator, ShieldCheck, Scale, Zap, Info } from "lucide-react";
 
 export const RiskCalculator: React.FC = () => {
+  const { activeAccount } = useAccounts();
   // Tab: "position" | "margin"
   const [tab, setTab] = useState<"position" | "margin">("position");
 
   // Position Size State
   const [balance, setBalance] = useState("10000");
+
+  useEffect(() => {
+    if (activeAccount && typeof activeAccount.current_balance === "number") {
+      setBalance(String(Math.max(0, Number(activeAccount.current_balance.toFixed(2)))));
+    }
+  }, [activeAccount]);
   const [riskPercent, setRiskPercent] = useState("1.0");
   const [assetType, setAssetType] = useState<"FOREX" | "GOLD" | "CRYPTO" | "INDEX">("FOREX");
   const [stopLossPips, setStopLossPips] = useState("20");

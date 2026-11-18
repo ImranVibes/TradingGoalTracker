@@ -15,10 +15,11 @@ import {
   Settings,
   Layers,
   CandlestickChart,
+  StickyNote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   {
     name: "Dashboard",
     href: "/",
@@ -38,6 +39,11 @@ const NAV_ITEMS = [
     name: "Positions Journal",
     href: "/journal",
     icon: BookOpen,
+  },
+  {
+    name: "Notes",
+    href: "/notes",
+    icon: StickyNote,
   },
   {
     name: "Signal Providers",

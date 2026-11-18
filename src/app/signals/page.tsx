@@ -8,6 +8,7 @@ import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { Modal } from "@/components/ui/Modal";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { SignalProviderStats, SignalProvider, Trade } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
@@ -39,6 +40,7 @@ import {
 } from "recharts";
 
 export default function SignalsPage() {
+  const { activeAccountId, activeAccount } = useAccounts();
   const [stats, setStats] = useState<SignalProviderStats[]>([]);
   const [providers, setProviders] = useState<SignalProvider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<SignalProviderStats | null>(null);
@@ -61,7 +63,11 @@ export default function SignalsPage() {
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/providers");
+      const accParam =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
+      const res = await fetch(`/api/providers${accParam}`);
       const data = await res.json();
       if (data.success) {
         setStats(data.stats || []);
@@ -82,7 +88,7 @@ export default function SignalsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchData();
@@ -170,9 +176,15 @@ export default function SignalsPage() {
                 <Radio className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-                  Signal Providers & Trader Comparison
-                </h1>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                    Signal Providers & Trader Comparison
+                  </h1>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-violet-500/10 text-violet-300 border border-violet-500/20">
+                    <Layers className="w-3 h-3" />
+                    {activeAccount ? activeAccount.name : "All Accounts (Combined)"}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-400 mt-0.5">
                   Track, compare, and rank performance between your own trades and followed signal providers.
                 </p>

@@ -7,12 +7,14 @@ import { GoalCard } from "@/components/goals/GoalCard";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { Goal } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import confetti from "canvas-confetti";
-import { Target, Trophy, PlusCircle, CheckCircle2, Award } from "lucide-react";
+import { Target, Trophy, PlusCircle, CheckCircle2, Award, Layers } from "lucide-react";
 
 export default function GoalsPage() {
+  const { activeAccountId, activeAccount, refreshAccounts } = useAccounts();
   const [goals, setGoals] = useState<Goal[]>([]);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
   const [editGoal, setEditGoal] = useState<Goal | null>(null);
@@ -21,7 +23,11 @@ export default function GoalsPage() {
 
   const fetchGoals = useCallback(async () => {
     try {
-      const res = await fetch("/api/goals");
+      const accParam =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
+      const res = await fetch(`/api/goals${accParam}`);
       const data = await res.json();
       if (data.success) {
         setGoals(data.goals);
@@ -37,7 +43,7 @@ export default function GoalsPage() {
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchGoals();
@@ -74,11 +80,17 @@ export default function GoalsPage() {
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-                Trading Goals & Targets
-              </h1>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                  Trading Goals & Targets
+                </h1>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                  <Layers className="w-3 h-3" />
+                  {activeAccount ? activeAccount.name : "All Accounts (Combined)"}
+                </span>
+              </div>
               <p className="text-xs text-slate-400 mt-0.5">
-                Set profit targets, account balance milestones, and payout targets.
+                Set profit targets, account balance milestones, and payout targets for this account workspace.
               </p>
             </div>
 

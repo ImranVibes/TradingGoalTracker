@@ -251,3 +251,18 @@ export interface CustomIndicator {
   created_at: string;
   updated_at?: string;
 }
+
+export interface TradingNote {
+  id: string;
+  account_id?: string;
+  title: string;
+  content: string;
+  category: string;
+  symbol?: string;
+  tags: string[];
+  is_pinned: boolean;
+  note_date: string;
+  image_url?: string;
+  created_at: string;
+  updated_at?: string;
+}

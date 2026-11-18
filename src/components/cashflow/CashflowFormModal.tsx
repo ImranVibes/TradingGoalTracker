@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { useAccounts } from "../providers/AccountProvider";
 import { Cashflow, CashflowType } from "@/lib/types";
 import { toDateInputValue } from "@/lib/utils";
 import { ArrowDownLeft, ShoppingBag, ArrowUpRight } from "lucide-react";
@@ -28,6 +29,8 @@ export const CashflowFormModal: React.FC<CashflowFormModalProps> = ({
   onClose,
   onSuccess,
 }) => {
+  const { accounts, activeAccountId } = useAccounts();
+  const [accountId, setAccountId] = useState("acc_default");
   const [type, setType] = useState<CashflowType>("WITHDRAWAL");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState("Personal Living & Rent");
@@ -36,6 +39,12 @@ export const CashflowFormModal: React.FC<CashflowFormModalProps> = ({
   const [date, setDate] = useState(toDateInputValue());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      setAccountId(activeAccountId && activeAccountId !== "ALL" ? activeAccountId : "acc_default");
+    }
+  }, [isOpen, activeAccountId]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,6 +62,7 @@ export const CashflowFormModal: React.FC<CashflowFormModalProps> = ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          account_id: accountId || "acc_default",
           type,
           amount: numAmount,
           category,
@@ -169,20 +179,37 @@ export const CashflowFormModal: React.FC<CashflowFormModalProps> = ({
           </div>
         </div>
 
-        {/* Category */}
-        <div>
-          <label className="block text-xs font-medium text-slate-300 mb-1">Category</label>
-          <select
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            className="w-full rounded-xl bg-slate-900 border border-slate-700/80 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
-          >
-            {CATEGORIES.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
+        {/* Account & Category */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1">Trading Account</label>
+            <select
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              className="w-full rounded-xl bg-slate-900 border border-slate-700/80 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+            >
+              {accounts.map((acc) => (
+                <option key={acc.id} value={acc.id}>
+                  {acc.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-slate-300 mb-1">Category</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className="w-full rounded-xl bg-slate-900 border border-slate-700/80 px-3 py-2 text-xs text-white focus:border-sky-500 focus:outline-none"
+            >
+              {CATEGORIES.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Spent on what (optional) */}

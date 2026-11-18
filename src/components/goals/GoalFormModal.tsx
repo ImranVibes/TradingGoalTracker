@@ -37,7 +37,7 @@ export const GoalFormModal: React.FC<GoalFormModalProps> = ({
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState<GoalCategory>("PROFIT_TARGET");
   const [trackingMode, setTrackingMode] = useState<GoalTrackingMode>("AUTO_DATE");
-  const [accountId, setAccountId] = useState("ALL");
+  const [accountId, setAccountId] = useState("acc_default");
   const [targetAmount, setTargetAmount] = useState("");
   const [currentAmount, setCurrentAmount] = useState("0");
   const [startDate, setStartDate] = useState(toDateInputValue());
@@ -57,7 +57,13 @@ export const GoalFormModal: React.FC<GoalFormModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      fetch("/api/trades")
+      const targetAcc = editGoal
+        ? editGoal.account_id || "acc_default"
+        : activeAccountId && activeAccountId !== "ALL"
+        ? activeAccountId
+        : "acc_default";
+      const accQuery = targetAcc && targetAcc !== "ALL" ? `?account_id=${encodeURIComponent(targetAcc)}` : "";
+      fetch(`/api/trades${accQuery}`)
         .then((r) => r.json())
         .then((data) => {
           if (data.success && Array.isArray(data.trades)) {
@@ -71,7 +77,7 @@ export const GoalFormModal: React.FC<GoalFormModalProps> = ({
       setTitle(editGoal.title);
       setCategory(editGoal.category);
       setTrackingMode(editGoal.tracking_mode === "MANUAL_TRADES" ? "MANUAL_TRADES" : "AUTO_DATE");
-      setAccountId(editGoal.account_id || "ALL");
+      setAccountId(editGoal.account_id || "acc_default");
       setTargetAmount(String(editGoal.target_amount));
       setCurrentAmount(String(editGoal.current_amount));
       const isExact = editGoal.start_date && !editGoal.start_date.endsWith("T00:00:00.000Z");
@@ -88,7 +94,7 @@ export const GoalFormModal: React.FC<GoalFormModalProps> = ({
       setTitle("");
       setCategory("PROFIT_TARGET");
       setTrackingMode("AUTO_DATE");
-      setAccountId(activeAccountId || "ALL");
+      setAccountId(activeAccountId && activeAccountId !== "ALL" ? activeAccountId : "acc_default");
       setTargetAmount("");
       setCurrentAmount("0");
       setStartDate(toDateInputValue());

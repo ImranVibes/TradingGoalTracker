@@ -6,7 +6,7 @@ import { z } from "zod";
 export const dynamic = "force-dynamic";
 
 const GoalSchema = z.object({
-  account_id: z.string().optional().default("ALL"),
+  account_id: z.string().optional().default("acc_default"),
   tracking_mode: z.enum(["AUTO_DATE", "MANUAL_TRADES"]).optional().default("AUTO_DATE"),
   linked_trade_ids: z.array(z.string()).optional().default([]),
   title: z.string().min(1, "Goal title is required").max(128),

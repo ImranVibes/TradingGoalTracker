@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { useAccounts } from "@/components/providers/AccountProvider";
 import { DashboardStats, Trade } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
 import {
@@ -20,15 +21,11 @@ import {
 } from "recharts";
 import {
   BarChart3,
-  TrendingUp,
-  TrendingDown,
-  Trophy,
-  PieChart,
-  ArrowUpRight,
-  ShieldCheck,
+  Layers,
 } from "lucide-react";
 
 export default function AnalyticsPage() {
+  const { activeAccountId, activeAccount } = useAccounts();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
@@ -37,9 +34,13 @@ export default function AnalyticsPage() {
 
   const fetchData = useCallback(async () => {
     try {
+      const accParam =
+        activeAccountId && activeAccountId !== "ALL"
+          ? `?account_id=${encodeURIComponent(activeAccountId)}`
+          : "";
       const [statsRes, tradesRes] = await Promise.all([
-        fetch("/api/stats").then((r) => r.json()),
-        fetch("/api/trades").then((r) => r.json()),
+        fetch(`/api/stats${accParam}`).then((r) => r.json()),
+        fetch(`/api/trades${accParam}`).then((r) => r.json()),
       ]);
 
       if (statsRes.success) setStats(statsRes.stats);
@@ -47,7 +48,7 @@ export default function AnalyticsPage() {
     } catch (err) {
       console.error(err);
     }
-  }, []);
+  }, [activeAccountId]);
 
   useEffect(() => {
     fetchData();
@@ -92,9 +93,15 @@ export default function AnalyticsPage() {
                 <BarChart3 className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold text-white tracking-tight">
-                  Trading Edge & Currency Analytics
-                </h1>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h1 className="text-2xl font-bold text-white tracking-tight">
+                    Trading Edge & Currency Analytics
+                  </h1>
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-sky-500/10 text-sky-300 border border-sky-500/20">
+                    <Layers className="w-3 h-3" />
+                    {activeAccount ? activeAccount.name : "All Accounts (Combined)"}
+                  </span>
+                </div>
                 <p className="text-xs text-slate-400">
                   Detailed mathematical breakdown of traded currency pairs, strategy edges, and risk metrics
                 </p>
