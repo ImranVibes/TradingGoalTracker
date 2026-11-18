@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { ExchangeConnection, UserSettings } from "@/lib/types";
 import {
@@ -24,6 +25,7 @@ import {
   Layers,
   Calendar,
   RotateCcw,
+  CheckSquare,
 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -63,6 +65,8 @@ export default function SettingsPage() {
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isSelectiveImportOpen, setIsSelectiveImportOpen] = useState(false);
+  const [selectiveConnId, setSelectiveConnId] = useState<string | undefined>(undefined);
 
   const fetchAll = useCallback(async () => {
     setIsLoading(true);
@@ -417,12 +421,15 @@ export default function SettingsPage() {
                           Sync Latest
                         </button>
                         <button
-                          onClick={() => handleSyncConnection(conn.id, true)}
-                          disabled={syncingId === conn.id}
-                          className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:text-white transition-colors disabled:opacity-50"
-                          title="Scan full recent history (still respects deleted/ignored positions)"
+                          onClick={() => {
+                            setSelectiveConnId(conn.id);
+                            setIsSelectiveImportOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition-colors flex items-center gap-1"
+                          title="Open pop-up checklist to pick specific positions (including deleted ones) to import"
                         >
-                          Full Scan
+                          <CheckSquare className="w-3 h-3" />
+                          Force Sync (Select)
                         </button>
                         <button
                           onClick={() => handleDeleteConnection(conn.id)}
@@ -897,6 +904,18 @@ export default function SettingsPage() {
         isOpen={isGoalModalOpen}
         onClose={() => setIsGoalModalOpen(false)}
         onSuccess={() => fetchAll()}
+      />
+
+      <SelectiveImportModal
+        isOpen={isSelectiveImportOpen}
+        onClose={() => setIsSelectiveImportOpen(false)}
+        connectionId={selectiveConnId}
+        onImported={(msg) => {
+          setSyncStatus(msg);
+          fetchAll();
+          refreshAccounts();
+          setTimeout(() => setSyncStatus(null), 5000);
+        }}
       />
     </div>
   );

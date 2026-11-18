@@ -11,6 +11,7 @@ import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { GoalCard } from "@/components/goals/GoalCard";
+import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal, DashboardStats } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
@@ -33,6 +34,7 @@ import {
   Target,
   RotateCcw,
   Layers,
+  CheckSquare,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -57,6 +59,7 @@ export default function DashboardPage() {
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isSelectiveImportOpen, setIsSelectiveImportOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [editTrade, setEditTrade] = useState<Trade | null>(null);
   const [editGoal, setEditGoal] = useState<Goal | null>(null);
@@ -190,10 +193,19 @@ export default function DashboardPage() {
                 onClick={handleSyncExchanges}
                 disabled={isSyncing}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                title="Sync latest closed positions & fees from Binance and Bybit"
+                title="Sync latest closed positions & fees from Binance and Bybit (skips deleted ones)"
               >
                 <RefreshCw className={`w-3.5 h-3.5 text-sky-400 ${isSyncing ? "animate-spin" : ""}`} />
-                {isSyncing ? "Syncing..." : "Sync Positions"}
+                {isSyncing ? "Syncing..." : "Sync Latest"}
+              </button>
+
+              <button
+                onClick={() => setIsSelectiveImportOpen(true)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-colors flex items-center gap-1.5"
+                title="Force sync and pick specific positions (including deleted ones) from a pop-up checklist"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                Force Sync (Select)
               </button>
 
               <Link
@@ -666,6 +678,17 @@ export default function DashboardPage() {
         onClose={() => setIsGoalModalOpen(false)}
         onSuccess={() => fetchData()}
         editGoal={editGoal}
+      />
+
+      <SelectiveImportModal
+        isOpen={isSelectiveImportOpen}
+        onClose={() => setIsSelectiveImportOpen(false)}
+        onImported={(msg) => {
+          setSyncMessage(msg);
+          fetchData();
+          refreshAccounts();
+          setTimeout(() => setSyncMessage(null), 5000);
+        }}
       />
     </div>
   );

@@ -4,6 +4,8 @@ import {
   syncAllExchanges,
   clearIgnoredExchangeTrades,
   cleanupLegacyPartialFills,
+  previewExchangePositions,
+  importSelectedExchangePositions,
 } from "@/lib/db";
 import { BinanceClient, BybitClient } from "@/lib/exchanges";
 
@@ -35,6 +37,33 @@ export async function POST(req: NextRequest) {
       } else {
         return NextResponse.json({ success: false, error: "Unsupported exchange for auto-sync" }, { status: 400 });
       }
+    }
+
+    // Force-Sync Preview: fetch all consolidated positions from exchange WITHOUT importing yet
+    if (action === "preview") {
+      const result = await previewExchangePositions(connectionId || undefined);
+      return NextResponse.json(result);
+    }
+
+    // Selective Import: import ONLY the positions checked by the user in the modal
+    if (action === "import_selected") {
+      const positions = Array.isArray(body.positions) ? body.positions : [];
+      if (positions.length === 0) {
+        return NextResponse.json(
+          { success: false, error: "Please select at least one position to import." },
+          { status: 400 }
+        );
+      }
+      const res = await importSelectedExchangePositions(positions, {
+        account_id: body.account_id || undefined,
+        signal_provider: body.signal_provider || undefined,
+      });
+      return NextResponse.json({
+        success: true,
+        imported_trades: res.imported,
+        skipped: res.skipped,
+        message: `Imported ${res.imported} selected position(s)!`,
+      });
     }
 
     // Clear ignored deleted positions list

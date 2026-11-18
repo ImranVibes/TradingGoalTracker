@@ -397,6 +397,23 @@ export async function clearIgnoredExchangeTrades(): Promise<void> {
   }
 }
 
+export async function removeIgnoredExchangeTrade(exchangeTradeId: string): Promise<void> {
+  if (!exchangeTradeId) return;
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query("DELETE FROM tracker_ignored_exchange_trades WHERE exchange_trade_id = $1", [
+      exchangeTradeId,
+    ]);
+  } else {
+    const store = loadLocalStore();
+    store.ignored_exchange_trade_ids = (store.ignored_exchange_trade_ids || []).filter(
+      (id) => id !== exchangeTradeId
+    );
+    saveLocalStore(store);
+  }
+}
+
 // -----------------------------------------------------------------------------
 // TRADES API
 // -----------------------------------------------------------------------------
@@ -2414,4 +2431,141 @@ export async function syncAllExchanges(options?: {
   }
 
   return { results, totalImported };
+}
+
+export interface PreviewExchangePosition extends Partial<Trade> {
+  connection_id: string;
+  connection_name: string;
+  default_account_id: string;
+  alreadyImported: boolean;
+  wasDeleted: boolean;
+}
+
+export async function previewExchangePositions(
+  connectionId?: string
+): Promise<{ success: boolean; positions: PreviewExchangePosition[]; errors: string[] }> {
+  const connections = await getExchangeConnections();
+  const targets = connectionId
+    ? connections.filter((c) => c.id === connectionId)
+    : connections.filter((c) => c.is_active);
+
+  if (targets.length === 0) {
+    return { success: false, positions: [], errors: ["No active exchange connections found."] };
+  }
+
+  // Load existing & ignored exchange_trade_ids once for fast O(1) lookup
+  const existingTrades = await getTrades();
+  const existingIds = new Set(
+    existingTrades.map((t) => t.exchange_trade_id).filter((id): id is string => Boolean(id))
+  );
+
+  const ignoredIds = new Set<string>();
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT exchange_trade_id FROM tracker_ignored_exchange_trades");
+    for (const r of res.rows) {
+      if (r.exchange_trade_id) ignoredIds.add(String(r.exchange_trade_id));
+    }
+  } else {
+    const store = loadLocalStore();
+    for (const id of store.ignored_exchange_trade_ids || []) {
+      ignoredIds.add(id);
+    }
+  }
+
+  const positions: PreviewExchangePosition[] = [];
+  const errors: string[] = [];
+
+  for (const conn of targets) {
+    try {
+      let raw: Partial<Trade>[] = [];
+      if (conn.exchange === "binance") {
+        const client = new BinanceClient(conn.api_key, conn.api_secret);
+        raw = await client.getFuturesClosedPositions();
+      } else if (conn.exchange === "bybit") {
+        const client = new BybitClient(conn.api_key, conn.api_secret);
+        raw = await client.getClosedPnL(100);
+      }
+
+      for (const item of raw) {
+        if (!item.exchange_trade_id) continue;
+        positions.push({
+          ...item,
+          exchange: conn.exchange.toUpperCase(),
+          connection_id: conn.id,
+          connection_name: conn.name,
+          default_account_id: conn.account_id || "acc_default",
+          alreadyImported: existingIds.has(item.exchange_trade_id),
+          wasDeleted: ignoredIds.has(item.exchange_trade_id),
+        });
+      }
+    } catch (err: any) {
+      errors.push(`${conn.name}: ${err.message}`);
+    }
+  }
+
+  positions.sort((a, b) => {
+    const ta = new Date(a.trade_date || 0).getTime();
+    const tb = new Date(b.trade_date || 0).getTime();
+    return tb - ta;
+  });
+
+  return { success: true, positions, errors };
+}
+
+export async function importSelectedExchangePositions(
+  positions: Partial<Trade>[],
+  options?: { account_id?: string; signal_provider?: string }
+): Promise<{ imported: number; skipped: number }> {
+  let imported = 0;
+  let skipped = 0;
+
+  for (const t of positions) {
+    if (!t.exchange_trade_id) {
+      skipped++;
+      continue;
+    }
+
+    // Explicitly un-ignore this trade ID so the user can restore a previously deleted trade
+    await removeIgnoredExchangeTrade(t.exchange_trade_id);
+
+    const existing = await getTradeByExchangeId(t.exchange_trade_id);
+    if (existing) {
+      skipped++;
+      continue;
+    }
+
+    const now = new Date().toISOString();
+    const newTrade: Trade = {
+      id: `tr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      account_id: options?.account_id || t.account_id || "acc_default",
+      symbol: (t.symbol || "BTCUSDT").toUpperCase(),
+      market: "CRYPTO",
+      direction: t.direction || "LONG",
+      entry_price: t.entry_price ?? null,
+      exit_price: t.exit_price ?? null,
+      quantity: t.quantity ?? 1,
+      gross_pnl: t.gross_pnl ?? t.pnl ?? 0,
+      trading_fee: t.trading_fee ?? 0,
+      funding_fee: t.funding_fee ?? 0,
+      pnl: Number(t.pnl || 0),
+      status: t.status || (Number(t.pnl || 0) > 0 ? "WON" : Number(t.pnl || 0) < 0 ? "LOST" : "BREAKEVEN"),
+      trade_date: t.trade_date || now,
+      closed_date: t.closed_date || t.trade_date || now,
+      exchange: (t.exchange || "BINANCE").toUpperCase(),
+      exchange_trade_id: t.exchange_trade_id,
+      strategy: t.strategy || "Exchange Auto-Sync",
+      signal_provider: options?.signal_provider?.trim() || t.signal_provider || "Self",
+      reason_entry: t.reason_entry || "Imported selectively from exchange",
+      reason_outcome: t.reason_outcome || "",
+      created_at: now,
+      updated_at: now,
+    };
+
+    await createTrade(newTrade);
+    imported++;
+  }
+
+  return { imported, skipped };
 }

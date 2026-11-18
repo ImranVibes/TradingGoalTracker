@@ -7,6 +7,7 @@ import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
 import { Badge } from "@/components/ui/Badge";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal } from "@/lib/types";
@@ -75,6 +76,7 @@ export default function JournalPage() {
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isSelectiveImportOpen, setIsSelectiveImportOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [editTrade, setEditTrade] = useState<Trade | null>(null);
 
@@ -497,10 +499,19 @@ export default function JournalPage() {
                 onClick={handleManualSync}
                 disabled={isSyncing}
                 className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-sky-300 border border-slate-800 transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                title="Fetch latest closed positions from connected exchanges"
+                title="Fetch latest closed positions from connected exchanges (skips deleted ones)"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-                {isSyncing ? "Syncing..." : "Sync Latest Positions"}
+                {isSyncing ? "Syncing..." : "Sync Latest"}
+              </button>
+
+              <button
+                onClick={() => setIsSelectiveImportOpen(true)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 transition-colors flex items-center gap-1.5"
+                title="Force sync and pick specific positions (including deleted ones) from a pop-up checklist"
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                Force Sync (Select)
               </button>
 
               <div className="flex items-center bg-slate-900 border border-slate-800 rounded-xl p-0.5">
@@ -1315,6 +1326,17 @@ export default function JournalPage() {
         isOpen={isGoalModalOpen}
         onClose={() => setIsGoalModalOpen(false)}
         onSuccess={() => fetchTrades()}
+      />
+
+      <SelectiveImportModal
+        isOpen={isSelectiveImportOpen}
+        onClose={() => setIsSelectiveImportOpen(false)}
+        onImported={(msg) => {
+          setStatusBanner(msg);
+          fetchTrades();
+          refreshAccounts();
+          setTimeout(() => setStatusBanner(null), 5000);
+        }}
       />
     </div>
   );
