@@ -9,6 +9,7 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
 import { Badge } from "@/components/ui/Badge";
+import { PairIcon } from "@/components/ui/PairIcon";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal } from "@/lib/types";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
@@ -983,6 +984,8 @@ export default function JournalPage() {
                             <Square className="w-4 h-4" />
                           )}
                         </button>
+
+                        <PairIcon symbol={trade.symbol} size="md" showQuoteBadge />
 
                         <div
                           className={`p-1.5 rounded-lg ${

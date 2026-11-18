@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { Trade } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { Badge } from "../ui/Badge";
+import { PairIcon } from "../ui/PairIcon";
 import { TrendingUp, TrendingDown, Radio, User } from "lucide-react";
 
 interface RecentTradesTableProps {
@@ -108,7 +109,8 @@ export const RecentTradesTable: React.FC<RecentTradesTableProps> = ({
                 >
                   {/* Symbol */}
                   <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <PairIcon symbol={trade.symbol} size="sm" showQuoteBadge />
                       <span className="font-mono font-bold text-sm text-white group-hover:text-sky-400 transition-colors">
                         {trade.symbol}
                       </span>

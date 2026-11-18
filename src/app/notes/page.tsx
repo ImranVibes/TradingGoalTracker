@@ -8,6 +8,7 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { PairIcon } from "@/components/ui/PairIcon";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { TradingNote } from "@/lib/types";
 import { formatDate, toDateInputValue } from "@/lib/utils";
@@ -665,7 +666,8 @@ export default function NotesPage() {
                             {catMeta.label}
                           </span>
                           {note.symbol && (
-                            <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">
+                              <PairIcon symbol={note.symbol} size="xs" />
                               {note.symbol}
                             </span>
                           )}
@@ -1027,7 +1029,8 @@ export default function NotesPage() {
                   {getCategoryMeta(viewingNote.category).label}
                 </span>
                 {viewingNote.symbol && (
-                  <span className="px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-slate-800 text-sky-300 border border-slate-700">
+                    <PairIcon symbol={viewingNote.symbol} size="xs" />
                     {viewingNote.symbol}
                   </span>
                 )}

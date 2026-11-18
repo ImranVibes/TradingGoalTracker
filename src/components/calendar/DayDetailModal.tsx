@@ -4,6 +4,7 @@ import React from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
+import { PairIcon } from "../ui/PairIcon";
 import { Trade, Cashflow } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import { TrendingUp, TrendingDown, ArrowDownLeft, ShoppingBag, PlusCircle } from "lucide-react";
@@ -139,6 +140,7 @@ export const DayDetailModal: React.FC<DayDetailModalProps> = ({
                   className="flex items-center justify-between p-3.5 rounded-xl border border-slate-800 bg-slate-900/80 hover:border-slate-700 cursor-pointer transition-all"
                 >
                   <div className="flex items-center gap-3">
+                    <PairIcon symbol={t.symbol} size="md" showQuoteBadge />
                     <div
                       className={`p-2 rounded-lg ${
                         t.direction === "LONG"

@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { PairIcon } from "@/components/ui/PairIcon";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { DashboardStats, Trade } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
@@ -237,7 +238,12 @@ export default function AnalyticsPage() {
                     <tbody className="divide-y divide-slate-800/60 font-mono">
                       {stats.pair_distribution.map((p) => (
                         <tr key={p.symbol} className="hover:bg-slate-800/30">
-                          <td className="px-4 py-3 font-bold text-white">{p.symbol}</td>
+                          <td className="px-4 py-3 font-bold text-white">
+                            <div className="flex items-center gap-2.5">
+                              <PairIcon symbol={p.symbol} size="sm" showQuoteBadge />
+                              <span>{p.symbol}</span>
+                            </div>
+                          </td>
                           <td className="px-4 py-3 text-slate-300">{p.count}</td>
                           <td className="px-4 py-3 text-slate-200">{p.win_rate}%</td>
                           <td

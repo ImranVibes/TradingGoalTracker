@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { PairIcon } from "../ui/PairIcon";
 import { useAccounts } from "../providers/AccountProvider";
 import { Trade } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -328,6 +329,8 @@ export const SelectiveImportModal: React.FC<SelectiveImportModalProps> = ({
                         <Square className="w-4 h-4 text-slate-500" />
                       )}
                     </div>
+
+                    <PairIcon symbol={pos.symbol || ""} size="sm" showQuoteBadge />
 
                     <div
                       className={`p-1 rounded-md flex-shrink-0 ${

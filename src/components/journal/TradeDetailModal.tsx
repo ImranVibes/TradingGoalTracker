@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Badge } from "../ui/Badge";
+import { PairIcon } from "../ui/PairIcon";
 import { Trade } from "@/lib/types";
 import { useAccounts } from "../providers/AccountProvider";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
@@ -84,6 +85,7 @@ export const TradeDetailModal: React.FC<TradeDetailModalProps> = ({
           }`}
         >
           <div className="flex items-center gap-3">
+            <PairIcon symbol={trade.symbol} size="lg" showQuoteBadge />
             <div
               className={`p-2 rounded-lg ${
                 isProfit

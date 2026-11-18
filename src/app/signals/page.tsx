@@ -8,6 +8,7 @@ import { TradeDetailModal } from "@/components/journal/TradeDetailModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { Modal } from "@/components/ui/Modal";
+import { PairIcon } from "@/components/ui/PairIcon";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { SignalProviderStats, SignalProvider, Trade } from "@/lib/types";
 import { formatCurrency, formatDate } from "@/lib/utils";
@@ -550,9 +551,12 @@ export default function SignalsPage() {
                         {/* Top Pair */}
                         <td className="px-4 py-3.5 whitespace-nowrap">
                           {topPair ? (
-                            <span className="font-mono text-slate-300">
-                              {topPair.symbol} <span className="text-slate-500">({topPair.win_rate}%)</span>
-                            </span>
+                            <div className="flex items-center gap-2 font-mono text-slate-300">
+                              <PairIcon symbol={topPair.symbol} size="xs" />
+                              <span>
+                                {topPair.symbol} <span className="text-slate-500">({topPair.win_rate}%)</span>
+                              </span>
+                            </div>
                           ) : (
                             <span className="text-slate-600">-</span>
                           )}
@@ -694,7 +698,10 @@ export default function SignalsPage() {
                     <div className="space-y-2">
                       {selectedProvider.top_pairs.map((p) => (
                         <div key={p.symbol} className="flex items-center justify-between text-xs font-mono p-2 rounded-lg bg-slate-900/90 border border-slate-800">
-                          <span className="font-bold text-white">{p.symbol}</span>
+                          <div className="flex items-center gap-2">
+                            <PairIcon symbol={p.symbol} size="xs" showQuoteBadge />
+                            <span className="font-bold text-white">{p.symbol}</span>
+                          </div>
                           <span className="text-slate-400">{p.count} trades</span>
                           <span className="text-slate-300">{p.win_rate}% win</span>
                           <span className={`font-bold ${p.pnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
@@ -727,6 +734,7 @@ export default function SignalsPage() {
                           className="flex items-center justify-between text-xs p-2 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-slate-700 cursor-pointer transition-colors"
                         >
                           <div className="flex items-center gap-2">
+                            <PairIcon symbol={t.symbol} size="xs" />
                             <span className="font-bold font-mono text-white">{t.symbol}</span>
                             <span className={`text-[10px] font-bold ${t.direction === "LONG" ? "text-emerald-400" : "text-rose-400"}`}>
                               {t.direction}

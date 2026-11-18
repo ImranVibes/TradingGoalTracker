@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
+import { PairIcon } from "../ui/PairIcon";
 import { useAccounts } from "../providers/AccountProvider";
 import { Goal, GoalCategory, GoalTrackingMode, Trade } from "@/lib/types";
 import { toDateInputValue, formatCurrency, formatDate } from "@/lib/utils";
@@ -496,6 +497,7 @@ export const GoalFormModal: React.FC<GoalFormModalProps> = ({
                           ) : (
                             <Square className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" />
                           )}
+                          <PairIcon symbol={t.symbol} size="xs" />
                           <span className="font-mono font-bold">{t.symbol}</span>
                           <span className="text-[10px] text-slate-400">{t.direction}</span>
                           <span className="text-[10px] text-slate-500 font-mono truncate">
