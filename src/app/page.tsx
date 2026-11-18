@@ -70,7 +70,7 @@ export default function DashboardPage() {
       const [statsRes, tradesRes, goalsRes] = await Promise.all([
         fetch(`/api/stats${accParam}`).then((r) => r.json()),
         fetch(`/api/trades${accParam}`).then((r) => r.json()),
-        fetch("/api/goals").then((r) => r.json()),
+        fetch(`/api/goals${accParam}`).then((r) => r.json()),
       ]);
 
       if (statsRes.success) setStats(statsRes.stats);

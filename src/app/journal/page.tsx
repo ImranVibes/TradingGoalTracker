@@ -9,7 +9,7 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { Badge } from "@/components/ui/Badge";
 import { useAccounts } from "@/components/providers/AccountProvider";
-import { Trade } from "@/lib/types";
+import { Trade, Goal } from "@/lib/types";
 import { formatCurrency, formatDate, calculateRR } from "@/lib/utils";
 import {
   BookOpen,
@@ -33,6 +33,7 @@ import {
   Layers,
   Receipt,
   CheckCircle2,
+  Target,
 } from "lucide-react";
 
 type DateRangeType = "ALL" | "TODAY" | "WEEK" | "MONTH" | "CUSTOM";
@@ -49,6 +50,7 @@ export default function JournalPage() {
   } = useAccounts();
 
   const [trades, setTrades] = useState<Trade[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [marketFilter, setMarketFilter] = useState("ALL");
@@ -80,13 +82,35 @@ export default function JournalPage() {
         activeAccountId && activeAccountId !== "ALL"
           ? `?account_id=${encodeURIComponent(activeAccountId)}`
           : "";
-      const res = await fetch(`/api/trades${qs}`);
-      const data = await res.json();
-      if (data.success) setTrades(data.trades);
+      const [tradesRes, goalsRes] = await Promise.all([
+        fetch(`/api/trades${qs}`).then((r) => r.json()),
+        fetch("/api/goals").then((r) => r.json()),
+      ]);
+      if (tradesRes.success) setTrades(tradesRes.trades);
+      if (goalsRes.success) setGoals(goalsRes.goals);
     } catch (err) {
       console.error(err);
     }
   }, [activeAccountId]);
+
+  const handleToggleTradeGoal = async (goalId: string, tradeId: string) => {
+    if (!goalId) return;
+    try {
+      const res = await fetch(`/api/goals/${goalId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toggle_trade_id: tradeId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStatusBanner(`Updated goal "${data.goal?.title || "Goal"}" with this position's P&L!`);
+        await fetchTrades();
+        setTimeout(() => setStatusBanner(null), 4000);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   useEffect(() => {
     fetchTrades();
@@ -965,7 +989,51 @@ export default function JournalPage() {
                         )}
                       </div>
 
-                      <div className="flex items-center flex-wrap gap-3">
+                      <div className="flex items-center flex-wrap gap-2.5">
+                        {/* Linked Goal Badges + 1-Click Add to Goal */}
+                        {goals.length > 0 && (
+                          <div className="flex items-center flex-wrap gap-1.5">
+                            {goals
+                              .filter((g) => (g.linked_trade_ids || []).includes(trade.id))
+                              .map((g) => (
+                                <button
+                                  key={g.id}
+                                  onClick={() => handleToggleTradeGoal(g.id, trade.id)}
+                                  className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-rose-500/20 hover:text-rose-300 hover:border-rose-500/30 transition-colors flex items-center gap-1"
+                                  title={`Linked to goal "${g.title}" — click to unlink`}
+                                >
+                                  <Target className="w-2.5 h-2.5" />
+                                  {g.title} ✕
+                                </button>
+                              ))}
+
+                            <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg px-2 py-0.5">
+                              <Target className="w-3 h-3 text-emerald-400" />
+                              <select
+                                value=""
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleToggleTradeGoal(e.target.value, trade.id);
+                                  }
+                                }}
+                                className="bg-transparent text-[11px] text-slate-300 focus:outline-none cursor-pointer"
+                                title="Add this position's profit or loss to a specific goal"
+                              >
+                                <option value="" className="bg-slate-900 text-slate-400">
+                                  + Add to Goal
+                                </option>
+                                {goals
+                                  .filter((g) => !(g.linked_trade_ids || []).includes(trade.id))
+                                  .map((g) => (
+                                    <option key={g.id} value={g.id} className="bg-slate-900 text-white">
+                                      {g.title} ({formatCurrency(g.current_amount)}/{formatCurrency(g.target_amount)})
+                                    </option>
+                                  ))}
+                              </select>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Inline 1-Click Account Assignment */}
                         {accounts.length > 1 && (
                           <div className="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-lg px-2 py-0.5">

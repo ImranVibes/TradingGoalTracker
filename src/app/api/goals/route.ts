@@ -1,13 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getGoals, createGoal } from "@/lib/db";
+import { getGoals, createGoal, syncGoals } from "@/lib/db";
 import { Goal } from "@/lib/types";
 import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
 const GoalSchema = z.object({
+  account_id: z.string().optional().default("ALL"),
+  tracking_mode: z.enum(["AUTO_DATE", "MANUAL_TRADES"]).optional().default("AUTO_DATE"),
+  linked_trade_ids: z.array(z.string()).optional().default([]),
   title: z.string().min(1, "Goal title is required").max(128),
-  category: z.enum(["PROFIT_TARGET", "WITHDRAWAL_GOAL", "ACCOUNT_BALANCE", "DISCIPLINE_HABIT"]).default("PROFIT_TARGET"),
+  category: z
+    .enum(["PROFIT_TARGET", "WITHDRAWAL_GOAL", "ACCOUNT_BALANCE", "DISCIPLINE_HABIT"])
+    .default("PROFIT_TARGET"),
   target_amount: z.coerce.number().positive("Target amount must be greater than zero"),
   current_amount: z.coerce.number().default(0),
   start_date: z.string().default(() => new Date().toISOString()),
@@ -16,9 +21,12 @@ const GoalSchema = z.object({
   notes: z.string().optional().default(""),
 });
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const goals = await getGoals();
+    const { searchParams } = new URL(req.url);
+    const account_id = searchParams.get("account_id") || undefined;
+    await syncGoals();
+    const goals = await getGoals(account_id);
     return NextResponse.json({ success: true, count: goals.length, goals });
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });

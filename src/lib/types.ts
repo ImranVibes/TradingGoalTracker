@@ -80,10 +80,13 @@ export interface Cashflow {
 
 export type GoalCategory = "PROFIT_TARGET" | "WITHDRAWAL_GOAL" | "ACCOUNT_BALANCE" | "DISCIPLINE_HABIT";
 export type GoalStatus = "ACTIVE" | "ACHIEVED" | "PAUSED";
+export type GoalTrackingMode = "AUTO_DATE" | "MANUAL_TRADES";
 
 export interface Goal {
   id: string;
   account_id?: string;
+  tracking_mode?: GoalTrackingMode;
+  linked_trade_ids?: string[];
   title: string;
   category: GoalCategory;
   target_amount: number;

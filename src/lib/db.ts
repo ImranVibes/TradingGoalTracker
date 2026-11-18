@@ -299,7 +299,9 @@ async function initPostgresTables(client: any) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_tracker_trades_exchange_trade_id ON tracker_trades(exchange_trade_id) WHERE exchange_trade_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_tracker_cashflow_date ON tracker_cashflows(date);
     ALTER TABLE tracker_cashflows ADD COLUMN IF NOT EXISTS account_id VARCHAR(64) DEFAULT 'acc_default';
-    ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS account_id VARCHAR(64) DEFAULT 'acc_default';
+    ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS account_id VARCHAR(64) DEFAULT 'ALL';
+    ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS tracking_mode VARCHAR(32) DEFAULT 'AUTO_DATE';
+    ALTER TABLE tracker_goals ADD COLUMN IF NOT EXISTS linked_trade_ids TEXT DEFAULT '[]';
   `);
 }
 
@@ -931,14 +933,33 @@ export async function deleteCashflow(id: string): Promise<boolean> {
 // -----------------------------------------------------------------------------
 // GOALS API
 // -----------------------------------------------------------------------------
-export async function getGoals(): Promise<Goal[]> {
+function parseLinkedTradeIds(raw: any): string[] {
+  if (Array.isArray(raw)) return raw.filter((x) => typeof x === "string");
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+export async function getGoals(accountId?: string): Promise<Goal[]> {
   const { isPostgres } = await checkConnection();
+  let goals: Goal[] = [];
 
   if (isPostgres) {
     const p = getPool();
     const res = await p.query("SELECT * FROM tracker_goals ORDER BY created_at DESC");
-    return res.rows.map((r: any) => ({
+    goals = res.rows.map((r: any) => ({
       ...r,
+      account_id: r.account_id || "ALL",
+      tracking_mode: r.tracking_mode === "MANUAL_TRADES" ? "MANUAL_TRADES" : "AUTO_DATE",
+      linked_trade_ids: parseLinkedTradeIds(r.linked_trade_ids),
+      target_amount: Number(r.target_amount || 0),
+      current_amount: Number(r.current_amount || 0),
       start_date: new Date(r.start_date).toISOString(),
       target_date: r.target_date ? new Date(r.target_date).toISOString() : null,
       created_at: new Date(r.created_at).toISOString(),
@@ -946,23 +967,39 @@ export async function getGoals(): Promise<Goal[]> {
     }));
   } else {
     const store = loadLocalStore();
-    return [...store.goals].sort(
-      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-    );
+    goals = [...store.goals]
+      .map((g) => ({
+        ...g,
+        account_id: g.account_id || "ALL",
+        tracking_mode: g.tracking_mode === "MANUAL_TRADES" ? ("MANUAL_TRADES" as const) : ("AUTO_DATE" as const),
+        linked_trade_ids: parseLinkedTradeIds(g.linked_trade_ids),
+      }))
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }
+
+  if (accountId && accountId !== "ALL") {
+    return goals.filter((g) => !g.account_id || g.account_id === "ALL" || g.account_id === accountId);
+  }
+  return goals;
 }
 
 export async function createGoal(goal: Goal): Promise<Goal> {
   const { isPostgres } = await checkConnection();
+  const accountId = goal.account_id || "ALL";
+  const trackingMode = goal.tracking_mode === "MANUAL_TRADES" ? "MANUAL_TRADES" : "AUTO_DATE";
+  const linkedIds = parseLinkedTradeIds(goal.linked_trade_ids);
 
   if (isPostgres) {
     const p = getPool();
     await p.query(
       `INSERT INTO tracker_goals (
-        id, title, category, target_amount, current_amount, start_date, target_date, status, notes, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+        id, account_id, tracking_mode, linked_trade_ids, title, category, target_amount, current_amount, start_date, target_date, status, notes, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [
         goal.id,
+        accountId,
+        trackingMode,
+        JSON.stringify(linkedIds),
         goal.title,
         goal.category,
         goal.target_amount,
@@ -977,16 +1014,27 @@ export async function createGoal(goal: Goal): Promise<Goal> {
     );
   } else {
     const store = loadLocalStore();
-    store.goals.unshift(goal);
+    store.goals.unshift({
+      ...goal,
+      account_id: accountId,
+      tracking_mode: trackingMode,
+      linked_trade_ids: linkedIds,
+    });
     saveLocalStore(store);
   }
 
   await syncGoals();
-  return goal;
+  const refreshed = (await getGoals()).find((g) => g.id === goal.id);
+  return refreshed || { ...goal, account_id: accountId, tracking_mode: trackingMode, linked_trade_ids: linkedIds };
 }
 
-export async function updateGoal(id: string, updates: Partial<Goal>): Promise<Goal | null> {
+export async function updateGoal(
+  id: string,
+  updates: Partial<Goal>,
+  skipResync = false
+): Promise<Goal | null> {
   const { isPostgres } = await checkConnection();
+  let updated: Goal | null = null;
 
   if (isPostgres) {
     const p = getPool();
@@ -994,18 +1042,51 @@ export async function updateGoal(id: string, updates: Partial<Goal>): Promise<Go
     if (existingRes.rows.length === 0) return null;
     const existing = existingRes.rows[0];
 
-    const updated = {
+    const trackingMode =
+      updates.tracking_mode !== undefined
+        ? updates.tracking_mode === "MANUAL_TRADES"
+          ? "MANUAL_TRADES"
+          : "AUTO_DATE"
+        : existing.tracking_mode === "MANUAL_TRADES"
+        ? "MANUAL_TRADES"
+        : "AUTO_DATE";
+
+    const linkedIds =
+      updates.linked_trade_ids !== undefined
+        ? parseLinkedTradeIds(updates.linked_trade_ids)
+        : parseLinkedTradeIds(existing.linked_trade_ids);
+
+    updated = {
       ...existing,
       ...updates,
+      account_id: updates.account_id !== undefined ? updates.account_id : existing.account_id || "ALL",
+      tracking_mode: trackingMode,
+      linked_trade_ids: linkedIds,
+      target_amount: Number(updates.target_amount ?? existing.target_amount ?? 0),
+      current_amount: Number(updates.current_amount ?? existing.current_amount ?? 0),
+      start_date: updates.start_date
+        ? new Date(updates.start_date).toISOString()
+        : new Date(existing.start_date).toISOString(),
+      target_date:
+        updates.target_date !== undefined
+          ? updates.target_date
+            ? new Date(updates.target_date).toISOString()
+            : null
+          : existing.target_date
+          ? new Date(existing.target_date).toISOString()
+          : null,
       updated_at: new Date().toISOString(),
     };
 
     await p.query(
       `UPDATE tracker_goals SET
-        title = $1, category = $2, target_amount = $3, current_amount = $4,
-        start_date = $5, target_date = $6, status = $7, notes = $8, updated_at = $9
-      WHERE id = $10`,
+        account_id = $1, tracking_mode = $2, linked_trade_ids = $3, title = $4, category = $5, target_amount = $6, current_amount = $7,
+        start_date = $8, target_date = $9, status = $10, notes = $11, updated_at = $12
+      WHERE id = $13`,
       [
+        updated.account_id,
+        trackingMode,
+        JSON.stringify(linkedIds),
         updated.title,
         updated.category,
         updated.target_amount,
@@ -1018,7 +1099,6 @@ export async function updateGoal(id: string, updates: Partial<Goal>): Promise<Go
         id,
       ]
     );
-    return updated;
   } else {
     const store = loadLocalStore();
     const idx = store.goals.findIndex((g) => g.id === id);
@@ -1029,8 +1109,16 @@ export async function updateGoal(id: string, updates: Partial<Goal>): Promise<Go
       updated_at: new Date().toISOString(),
     };
     saveLocalStore(store);
-    return store.goals[idx];
+    updated = store.goals[idx];
   }
+
+  if (!skipResync) {
+    await syncGoals();
+    const refreshed = (await getGoals()).find((g) => g.id === id);
+    if (refreshed) return refreshed;
+  }
+
+  return updated;
 }
 
 export async function deleteGoal(id: string): Promise<boolean> {
@@ -1163,22 +1251,67 @@ export async function syncGoals(): Promise<void> {
   const cashflows = await getCashflows();
   const goals = await getGoals();
 
-  const netPnl = trades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
-  const totalWithdrawn = cashflows
-    .filter((c) => c.type === "WITHDRAWAL")
-    .reduce((sum, c) => sum + Number(c.amount || 0), 0);
-
   for (const g of goals) {
-    let newAmount = g.current_amount;
-    if (g.category === "PROFIT_TARGET") {
-      newAmount = Math.max(0, netPnl);
+    const startIso = g.start_date ? new Date(g.start_date).toISOString() : "1970-01-01T00:00:00.000Z";
+    const startDateKey = startIso.split("T")[0];
+    const startMs = new Date(startIso).getTime();
+    const isExactTimestamp = !startIso.endsWith("T00:00:00.000Z");
+
+    const targetDateKey = g.target_date ? new Date(g.target_date).toISOString().split("T")[0] : null;
+    const filterAccount = g.account_id && g.account_id !== "ALL" ? g.account_id : null;
+    const trackingMode = g.tracking_mode === "MANUAL_TRADES" ? "MANUAL_TRADES" : "AUTO_DATE";
+    const linkedSet = new Set(parseLinkedTradeIds(g.linked_trade_ids));
+
+    const inDateWindow = (isoDate: string) => {
+      if (!isoDate) return false;
+      const dateKey = isoDate.split("T")[0];
+      if (isExactTimestamp) {
+        if (new Date(isoDate).getTime() < startMs) return false;
+      } else {
+        if (dateKey < startDateKey) return false;
+      }
+      if (targetDateKey && dateKey > targetDateKey) return false;
+      return true;
+    };
+
+    let newAmount = Number(g.current_amount || 0);
+
+    if (g.category === "PROFIT_TARGET" || trackingMode === "MANUAL_TRADES") {
+      const scopedTrades =
+        trackingMode === "MANUAL_TRADES"
+          ? trades.filter((t) => linkedSet.has(t.id))
+          : trades.filter((t) => {
+              if (linkedSet.has(t.id)) return true;
+              if (filterAccount && (t.account_id || "acc_default") !== filterAccount) return false;
+              return inDateWindow(t.trade_date);
+            });
+      const netPnl = scopedTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+      newAmount = Number(netPnl.toFixed(2));
     } else if (g.category === "WITHDRAWAL_GOAL") {
-      newAmount = totalWithdrawn;
+      const scopedWithdrawals = cashflows.filter((c) => {
+        if (c.type !== "WITHDRAWAL") return false;
+        if (filterAccount && (c.account_id || "acc_default") !== filterAccount) return false;
+        return inDateWindow(c.date);
+      });
+      const totalWithdrawn = scopedWithdrawals.reduce((sum, c) => sum + Number(c.amount || 0), 0);
+      newAmount = Number(totalWithdrawn.toFixed(2));
     }
 
-    if (newAmount !== g.current_amount) {
-      const newStatus = newAmount >= g.target_amount ? "ACHIEVED" : g.status;
-      await updateGoal(g.id, { current_amount: newAmount, status: newStatus });
+    let newStatus = g.status;
+    if (
+      g.category === "PROFIT_TARGET" ||
+      g.category === "WITHDRAWAL_GOAL" ||
+      trackingMode === "MANUAL_TRADES"
+    ) {
+      if (newAmount >= Number(g.target_amount || 0) && Number(g.target_amount || 0) > 0) {
+        newStatus = "ACHIEVED";
+      } else if (g.status === "ACHIEVED") {
+        newStatus = "ACTIVE";
+      }
+    }
+
+    if (newAmount !== Number(g.current_amount || 0) || newStatus !== g.status) {
+      await updateGoal(g.id, { current_amount: newAmount, status: newStatus }, true);
     }
   }
 }
