@@ -17,8 +17,11 @@ import {
   TradingNote,
   ChecklistItem,
   ChecklistLog,
+  DosDontsTemplate,
+  DailyDosDontsLog,
+  DailyBehaviorItem,
 } from "./types";
-import { DEFAULT_CHECKLIST_SEED } from "./tradingMetrics";
+import { DEFAULT_CHECKLIST_SEED, DEFAULT_DOS_DONTS_TEMPLATES } from "./tradingMetrics";
 import { BinanceClient, BybitClient, ExchangeSyncResult } from "./exchanges";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -63,6 +66,8 @@ interface LocalStore {
   notes?: TradingNote[];
   checklist_items?: ChecklistItem[];
   checklist_logs?: ChecklistLog[];
+  dos_donts_templates?: DosDontsTemplate[];
+  daily_dos_donts?: DailyDosDontsLog[];
   settings: Record<string, any>;
 }
 
@@ -373,6 +378,27 @@ async function initPostgresTables(client: any) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     CREATE INDEX IF NOT EXISTS idx_tracker_checklist_logs_acc ON tracker_checklist_logs(account_id);
+
+    CREATE TABLE IF NOT EXISTS tracker_dos_donts_templates (
+      id VARCHAR(64) PRIMARY KEY,
+      kind VARCHAR(8) NOT NULL DEFAULT 'DO',
+      label VARCHAR(200) NOT NULL,
+      category VARCHAR(48) NOT NULL DEFAULT 'General',
+      is_custom BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS tracker_daily_dos_donts (
+      id VARCHAR(64) PRIMARY KEY,
+      account_id VARCHAR(64) NOT NULL DEFAULT 'acc_default',
+      date VARCHAR(16) NOT NULL,
+      items TEXT NOT NULL DEFAULT '[]',
+      reflection TEXT DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (account_id, date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_tracker_daily_dos_donts_acc_date ON tracker_daily_dos_donts(account_id, date);
   `);
 }
 
@@ -3577,6 +3603,266 @@ export async function deleteChecklistLog(id: string): Promise<boolean> {
     const before = store.checklist_logs.length;
     store.checklist_logs = store.checklist_logs.filter((l) => l.id !== id);
     if (store.checklist_logs.length !== before) {
+      saveLocalStore(store);
+      return true;
+    }
+    return false;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// POST-TRADING DAILY DO'S & DON'TS JOURNAL API
+// -----------------------------------------------------------------------------
+function parseBehaviorItems(raw: any): DailyBehaviorItem[] {
+  let arr: any[] = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) arr = parsed;
+    } catch {}
+  }
+  return arr
+    .filter((x) => x && typeof x.label === "string" && x.label.trim())
+    .map((x) => ({
+      label: String(x.label).trim(),
+      kind: x.kind === "DONT" ? ("DONT" as const) : ("DO" as const),
+      count: Math.max(1, Math.min(99, Math.round(Number(x.count || 1)))),
+      category: x.category ? String(x.category).trim() : "General",
+    }));
+}
+
+export async function getDosDontsTemplates(): Promise<DosDontsTemplate[]> {
+  const { isPostgres } = await checkConnection();
+
+  if (isPostgres) {
+    const p = getPool();
+    const initRes = await p.query(
+      "SELECT value FROM tracker_settings WHERE key = 'dos_donts_templates_initialized'"
+    );
+    if (initRes.rows.length === 0) {
+      for (const tpl of DEFAULT_DOS_DONTS_TEMPLATES) {
+        await p.query(
+          `INSERT INTO tracker_dos_donts_templates (id, kind, label, category, is_custom, created_at)
+           VALUES ($1, $2, $3, $4, FALSE, NOW())
+           ON CONFLICT (id) DO NOTHING`,
+          [tpl.id, tpl.kind, tpl.label, tpl.category]
+        );
+      }
+      await p.query(
+        `INSERT INTO tracker_settings (key, value, updated_at)
+         VALUES ('dos_donts_templates_initialized', '{"initialized":true}', NOW())
+         ON CONFLICT (key) DO NOTHING`
+      );
+    }
+
+    const res = await p.query(
+      "SELECT * FROM tracker_dos_donts_templates ORDER BY is_custom ASC, created_at ASC"
+    );
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      kind: r.kind === "DONT" ? "DONT" : "DO",
+      label: r.label,
+      category: r.category || "General",
+      is_custom: Boolean(r.is_custom),
+      created_at: new Date(r.created_at).toISOString(),
+    }));
+  } else {
+    const store = loadLocalStore();
+    if (!store.settings?.dos_donts_templates_initialized) {
+      store.dos_donts_templates = DEFAULT_DOS_DONTS_TEMPLATES.map((t) => ({
+        ...t,
+        is_custom: false,
+        created_at: new Date().toISOString(),
+      }));
+      store.settings = { ...(store.settings || {}), dos_donts_templates_initialized: true };
+      saveLocalStore(store);
+    }
+    return [...(store.dos_donts_templates || [])];
+  }
+}
+
+export async function createDosDontsTemplate(
+  tpl: Omit<DosDontsTemplate, "created_at">
+): Promise<DosDontsTemplate> {
+  const { isPostgres } = await checkConnection();
+  const now = new Date().toISOString();
+  const record: DosDontsTemplate = {
+    id: tpl.id,
+    kind: tpl.kind === "DONT" ? "DONT" : "DO",
+    label: tpl.label.trim(),
+    category: tpl.category?.trim() || "Custom",
+    is_custom: true,
+    created_at: now,
+  };
+
+  if (isPostgres) {
+    const p = getPool();
+    // Avoid duplicates by case-insensitive label+kind
+    const dup = await p.query(
+      "SELECT * FROM tracker_dos_donts_templates WHERE kind = $1 AND LOWER(label) = LOWER($2) LIMIT 1",
+      [record.kind, record.label]
+    );
+    if (dup.rows.length > 0) {
+      const r = dup.rows[0];
+      return {
+        id: r.id,
+        kind: r.kind === "DONT" ? "DONT" : "DO",
+        label: r.label,
+        category: r.category || "Custom",
+        is_custom: Boolean(r.is_custom),
+        created_at: new Date(r.created_at).toISOString(),
+      };
+    }
+
+    await p.query(
+      `INSERT INTO tracker_dos_donts_templates (id, kind, label, category, is_custom, created_at)
+       VALUES ($1, $2, $3, $4, TRUE, $5)`,
+      [record.id, record.kind, record.label, record.category, record.created_at]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.dos_donts_templates) store.dos_donts_templates = [];
+    const existing = store.dos_donts_templates.find(
+      (t) => t.kind === record.kind && t.label.toLowerCase() === record.label.toLowerCase()
+    );
+    if (existing) return existing;
+    store.dos_donts_templates.push(record);
+    saveLocalStore(store);
+  }
+  return record;
+}
+
+export async function deleteDosDontsTemplate(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("DELETE FROM tracker_dos_donts_templates WHERE id = $1", [id]);
+    return (res.rowCount || 0) > 0;
+  } else {
+    const store = loadLocalStore();
+    if (!store.dos_donts_templates) return false;
+    const before = store.dos_donts_templates.length;
+    store.dos_donts_templates = store.dos_donts_templates.filter((t) => t.id !== id);
+    if (store.dos_donts_templates.length !== before) {
+      saveLocalStore(store);
+      return true;
+    }
+    return false;
+  }
+}
+
+export async function getDailyDosDontsLogs(accountId?: string): Promise<DailyDosDontsLog[]> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    let query = "SELECT * FROM tracker_daily_dos_donts WHERE 1=1";
+    const vals: any[] = [];
+    let idx = 1;
+    if (accountId && accountId !== "ALL") {
+      if (accountId === "acc_default") {
+        query += ` AND (account_id = $${idx++} OR account_id IS NULL OR account_id = '')`;
+        vals.push(accountId);
+      } else {
+        query += ` AND account_id = $${idx++}`;
+        vals.push(accountId);
+      }
+    }
+    query += " ORDER BY date DESC";
+    const res = await p.query(query, vals);
+    return res.rows.map((r: any) => ({
+      id: r.id,
+      account_id: r.account_id || "acc_default",
+      date: String(r.date).slice(0, 10),
+      items: parseBehaviorItems(r.items),
+      reflection: r.reflection || "",
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: new Date(r.updated_at).toISOString(),
+    }));
+  } else {
+    const store = loadLocalStore();
+    let logs = [...(store.daily_dos_donts || [])];
+    if (accountId && accountId !== "ALL") {
+      logs = logs.filter((l) => (l.account_id || "acc_default") === accountId);
+    }
+    return logs.sort((a, b) => b.date.localeCompare(a.date));
+  }
+}
+
+export async function upsertDailyDosDontsLog(input: {
+  account_id: string;
+  date: string;
+  items: DailyBehaviorItem[];
+  reflection?: string;
+}): Promise<DailyDosDontsLog> {
+  const { isPostgres } = await checkConnection();
+  const accountId =
+    input.account_id && input.account_id !== "ALL" ? input.account_id : "acc_default";
+  const dateKey = input.date.slice(0, 10);
+  const cleanedItems = parseBehaviorItems(input.items);
+  const reflection = (input.reflection || "").trim();
+  const now = new Date().toISOString();
+  const id = `dd_${accountId}_${dateKey}`;
+
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_daily_dos_donts (id, account_id, date, items, reflection, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (account_id, date) DO UPDATE SET
+         items = EXCLUDED.items,
+         reflection = EXCLUDED.reflection,
+         updated_at = EXCLUDED.updated_at`,
+      [id, accountId, dateKey, JSON.stringify(cleanedItems), reflection, now, now]
+    );
+    const res = await p.query(
+      "SELECT * FROM tracker_daily_dos_donts WHERE account_id = $1 AND date = $2 LIMIT 1",
+      [accountId, dateKey]
+    );
+    const r = res.rows[0];
+    return {
+      id: r.id,
+      account_id: r.account_id,
+      date: String(r.date).slice(0, 10),
+      items: parseBehaviorItems(r.items),
+      reflection: r.reflection || "",
+      created_at: new Date(r.created_at).toISOString(),
+      updated_at: new Date(r.updated_at).toISOString(),
+    };
+  } else {
+    const store = loadLocalStore();
+    if (!store.daily_dos_donts) store.daily_dos_donts = [];
+    const idx = store.daily_dos_donts.findIndex(
+      (l) => l.account_id === accountId && l.date === dateKey
+    );
+    const record: DailyDosDontsLog = {
+      id,
+      account_id: accountId,
+      date: dateKey,
+      items: cleanedItems,
+      reflection,
+      created_at: idx >= 0 ? store.daily_dos_donts[idx].created_at : now,
+      updated_at: now,
+    };
+    if (idx >= 0) store.daily_dos_donts[idx] = record;
+    else store.daily_dos_donts.unshift(record);
+    saveLocalStore(store);
+    return record;
+  }
+}
+
+export async function deleteDailyDosDontsLog(id: string): Promise<boolean> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("DELETE FROM tracker_daily_dos_donts WHERE id = $1", [id]);
+    return (res.rowCount || 0) > 0;
+  } else {
+    const store = loadLocalStore();
+    if (!store.daily_dos_donts) return false;
+    const before = store.daily_dos_donts.length;
+    store.daily_dos_donts = store.daily_dos_donts.filter((l) => l.id !== id);
+    if (store.daily_dos_donts.length !== before) {
       saveLocalStore(store);
       return true;
     }

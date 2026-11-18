@@ -293,3 +293,29 @@ export interface ChecklistLog {
   notes?: string;
   created_at: string;
 }
+
+export interface DosDontsTemplate {
+  id: string;
+  kind: "DO" | "DONT";
+  label: string;
+  category: string;
+  is_custom: boolean;
+  created_at: string;
+}
+
+export interface DailyBehaviorItem {
+  label: string;
+  kind: "DO" | "DONT";
+  count: number;
+  category?: string;
+}
+
+export interface DailyDosDontsLog {
+  id: string;
+  account_id: string;
+  date: string; // YYYY-MM-DD
+  items: DailyBehaviorItem[];
+  reflection?: string;
+  created_at: string;
+  updated_at: string;
+}

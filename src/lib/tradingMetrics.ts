@@ -117,6 +117,43 @@ export const DEFAULT_CHECKLIST_SEED = [
 ];
 
 // -----------------------------------------------------------------------------
+// DEFAULT POST-TRADING DO'S & DON'TS PRE-SELECTORS
+// -----------------------------------------------------------------------------
+export const DEFAULT_DOS_DONTS_TEMPLATES: {
+  id: string;
+  kind: "DO" | "DONT";
+  label: string;
+  category: string;
+}[] = [
+  // DO's (Good Habits Followed)
+  { id: "do_wait_confirm", kind: "DO", label: "Waited for confirmation", category: "Execution" },
+  { id: "do_follow_plan", kind: "DO", label: "Followed my trading plan", category: "Discipline" },
+  { id: "do_hard_sl", kind: "DO", label: "Used a hard stop-loss", category: "Risk" },
+  { id: "do_proper_risk", kind: "DO", label: "Respected 1–2% max risk", category: "Risk" },
+  { id: "do_with_sentiment", kind: "DO", label: "Traded with market sentiment", category: "Analysis" },
+  { id: "do_oi_funding", kind: "DO", label: "Checked OI, Funding & Whales", category: "Analysis" },
+  { id: "do_key_level", kind: "DO", label: "Entered at key S/R pullback", category: "Execution" },
+  { id: "do_let_winner", kind: "DO", label: "Let winner run to target", category: "Management" },
+  { id: "do_accept_sl", kind: "DO", label: "Accepted stop-loss calmly", category: "Psychology" },
+  { id: "do_stopped_goal", kind: "DO", label: "Stopped after hitting daily goal", category: "Discipline" },
+  { id: "do_skipped_chop", kind: "DO", label: "Skipped choppy / low-grade setups", category: "Patience" },
+  { id: "do_journaled", kind: "DO", label: "Reviewed & journaled trades", category: "Review" },
+  // DON'Ts (Mistakes Made)
+  { id: "dont_no_confirm", kind: "DONT", label: "Didn't wait for confirmation", category: "Execution" },
+  { id: "dont_revenge", kind: "DONT", label: "Revenge traded after a loss", category: "Psychology" },
+  { id: "dont_overtraded", kind: "DONT", label: "Overtraded / forced setups", category: "Discipline" },
+  { id: "dont_fomo", kind: "DONT", label: "FOMO chased a candle", category: "Psychology" },
+  { id: "dont_moved_sl", kind: "DONT", label: "Moved or removed stop-loss", category: "Risk" },
+  { id: "dont_overlev", kind: "DONT", label: "Overleveraged / oversized", category: "Risk" },
+  { id: "dont_counter_sent", kind: "DONT", label: "Traded against sentiment bias", category: "Analysis" },
+  { id: "dont_early_exit", kind: "DONT", label: "Closed winner too early", category: "Management" },
+  { id: "dont_no_sl", kind: "DONT", label: "Entered without stop-loss", category: "Risk" },
+  { id: "dont_news", kind: "DONT", label: "Traded during high-impact news", category: "Macro" },
+  { id: "dont_hope_loser", kind: "DONT", label: "Held loser hoping for a bounce", category: "Psychology" },
+  { id: "dont_skip_chk", kind: "DONT", label: "Ignored pre-trade checklist", category: "Discipline" },
+];
+
+// -----------------------------------------------------------------------------
 // TRADING SESSIONS & DAY-OF-WEEK ANALYTICS
 // -----------------------------------------------------------------------------
 export type TradingSessionId = "ASIA" | "LONDON" | "OVERLAP" | "NEW_YORK" | "LATE_NY";

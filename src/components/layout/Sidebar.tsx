@@ -18,6 +18,7 @@ import {
   StickyNote,
   CheckSquare,
   Compass,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,11 @@ export const NAV_ITEMS = [
     name: "Pre-Trade Checklist",
     href: "/checklist",
     icon: CheckSquare,
+  },
+  {
+    name: "Do's & Don'ts",
+    href: "/dos-donts",
+    icon: ClipboardCheck,
   },
   {
     name: "Trading Accounts",
