@@ -8,6 +8,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { AssistedOrderModal } from "@/components/checklist/AssistedOrderModal";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { PairIcon } from "@/components/ui/PairIcon";
@@ -31,6 +32,7 @@ import {
   CheckCircle2,
   AlertTriangle,
   Sparkles,
+  Zap,
 } from "lucide-react";
 
 const CATEGORIES = [
@@ -74,6 +76,7 @@ function ChecklistContent() {
   const [isTradeModalOpen, setIsTradeModalOpen] = useState(false);
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
+  const [isAssistedOrderOpen, setIsAssistedOrderOpen] = useState(false);
 
   // Hydrate symbol/direction/verdict when navigated from Sentiment Detector
   useEffect(() => {
@@ -605,7 +608,24 @@ function ChecklistContent() {
                     className="w-full py-2 rounded-xl text-xs font-semibold bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/30 transition-colors flex items-center justify-center gap-1.5"
                   >
                     <Sparkles className="w-3.5 h-3.5" />
-                    Save Check & Log Trade
+                    Save Check &amp; Log Trade
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!isClearedToTrade}
+                    onClick={() => setIsAssistedOrderOpen(true)}
+                    className="w-full py-2.5 rounded-xl text-xs font-bold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={
+                      isClearedToTrade
+                        ? "Open Checklist-Gated Assisted Order Modal (Binance Agent OS)"
+                        : "Reach ≥ 80% and check all REQUIRED rules to unlock Assisted Order Execution"
+                    }
+                  >
+                    <Zap className="w-3.5 h-3.5" />
+                    {isClearedToTrade
+                      ? "Prepare Assisted Order (Agent OS)"
+                      : "Pass Checklist (≥80%) to Unlock Order"}
                   </button>
                 </div>
               </div>
@@ -832,6 +852,17 @@ function ChecklistContent() {
         isOpen={isGoalModalOpen}
         onClose={() => setIsGoalModalOpen(false)}
         onSuccess={() => {}}
+      />
+
+      <AssistedOrderModal
+        isOpen={isAssistedOrderOpen}
+        onClose={() => setIsAssistedOrderOpen(false)}
+        accountId={activeAccountId && activeAccountId !== "ALL" ? activeAccountId : "acc_default"}
+        symbol={symbol || "BTCUSDT"}
+        direction={direction}
+        checklistScore={score}
+        criticalPassed={criticalPassed}
+        sentimentVerdict={sentimentVerdict}
       />
     </div>
   );

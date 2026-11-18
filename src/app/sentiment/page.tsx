@@ -26,6 +26,9 @@ import {
   ArrowRight,
   Info,
   Flame,
+  ShieldAlert,
+  Layers,
+  Bot,
 } from "lucide-react";
 
 const QUICK_PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "NEARUSDT", "QNTUSDT", "ZECUSDT", "DOGEUSDT"];
@@ -64,6 +67,28 @@ export default function SentimentPage() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
   const [market, setMarket] = useState<LiveMarketSnapshot | null>(null);
+  const [orderBook, setOrderBook] = useState<{
+    bidDepthUsd: number;
+    askDepthUsd: number;
+    bidPressurePct: number;
+    askPressurePct: number;
+    signal: string;
+    biggestBidWall: { price: number; usd: number } | null;
+    biggestAskWall: { price: number; usd: number } | null;
+  } | null>(null);
+  const [tokenAudit, setTokenAudit] = useState<{
+    baseAsset: string;
+    isMainSpotListed: boolean;
+    isAlphaToken: boolean;
+    chainName: string | null;
+    contractAddress: string | null;
+    oiToVolRatio: number;
+    overallRiskTier: "LOW" | "MODERATE" | "HIGH";
+    flags: { severity: "LOW" | "MEDIUM" | "HIGH"; title: string; detail: string }[];
+  } | null>(null);
+  const [trendingMovers, setTrendingMovers] = useState<
+    { symbol: string; lastPrice: number; priceChangePct: number; quoteVolumeUsd: number }[]
+  >([]);
 
   // Editable Sentiment Inputs (auto-filled from Binance Live, or manually edited anytime)
   const [input, setInput] = useState<SentimentInput>({
@@ -96,10 +121,16 @@ export default function SentimentPage() {
       if (!data.success) {
         setFetchError(data.error || "Could not fetch live futures data — you can still enter values manually below.");
         setMarket(null);
+        setOrderBook(null);
+        setTokenAudit(null);
+        if (Array.isArray(data.trendingMovers)) setTrendingMovers(data.trendingMovers);
         setInput((prev) => ({ ...prev, symbol: clean }));
         return;
       }
       setMarket(data.market);
+      setOrderBook(data.orderBook || null);
+      setTokenAudit(data.tokenAudit || null);
+      if (Array.isArray(data.trendingMovers)) setTrendingMovers(data.trendingMovers);
       setInput(data.input);
       setLastFetchedAt(data.fetchedAt);
     } catch (err: any) {
@@ -654,6 +685,227 @@ export default function SentimentPage() {
               </div>
             </div>
           </div>
+
+          {/* BINANCE SKILLS HUB INTELLIGENCE LAYER: Order Book Whale Walls + Token Security Audit + Trending Spikes */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Order-Book Whale Walls & Bid/Ask Pressure */}
+            <div className="lg:col-span-6 rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-4 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-sky-400" />
+                    Order-Book Depth &amp; Whale Walls (Top 50 Levels)
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Live Binance Futures orderbook liquidity imbalance &amp; largest institutional bid/ask walls
+                  </p>
+                </div>
+                {orderBook && (
+                  <span
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                      orderBook.signal === "BUY_WALL_DOMINANT"
+                        ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                        : orderBook.signal === "SELL_WALL_DOMINANT"
+                        ? "bg-rose-500/15 text-rose-300 border-rose-500/30"
+                        : "bg-slate-800 text-slate-300 border-slate-700"
+                    }`}
+                  >
+                    {orderBook.signal.replace(/_/g, " ")}
+                  </span>
+                )}
+              </div>
+
+              {orderBook ? (
+                <div className="space-y-3">
+                  {/* Pressure Bar */}
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs font-mono font-bold">
+                      <span className="text-emerald-400">
+                        Bids {orderBook.bidPressurePct}% ({formatCompactUsd(orderBook.bidDepthUsd)})
+                      </span>
+                      <span className="text-rose-400">
+                        Asks {orderBook.askPressurePct}% ({formatCompactUsd(orderBook.askDepthUsd)})
+                      </span>
+                    </div>
+                    <div className="h-3 rounded-full overflow-hidden flex bg-slate-900 border border-slate-800">
+                      <div
+                        className="bg-emerald-500 h-full transition-all duration-300"
+                        style={{ width: `${orderBook.bidPressurePct}%` }}
+                      />
+                      <div
+                        className="bg-rose-500 h-full transition-all duration-300"
+                        style={{ width: `${orderBook.askPressurePct}%` }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Biggest Bid & Ask Walls */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
+                    <div className="p-3 rounded-xl bg-emerald-500/[0.06] border border-emerald-500/25">
+                      <span className="text-[10px] font-sans font-bold uppercase text-emerald-300 block">
+                        Largest Bid Whale Wall (Support)
+                      </span>
+                      {orderBook.biggestBidWall ? (
+                        <>
+                          <div className="text-base font-black text-white mt-0.5">
+                            ${orderBook.biggestBidWall.price.toLocaleString()}
+                          </div>
+                          <div className="text-[11px] text-emerald-400">
+                            Wall Size: {formatCompactUsd(orderBook.biggestBidWall.usd)}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </div>
+
+                    <div className="p-3 rounded-xl bg-rose-500/[0.06] border border-rose-500/25">
+                      <span className="text-[10px] font-sans font-bold uppercase text-rose-300 block">
+                        Largest Ask Whale Wall (Resistance)
+                      </span>
+                      {orderBook.biggestAskWall ? (
+                        <>
+                          <div className="text-base font-black text-white mt-0.5">
+                            ${orderBook.biggestAskWall.price.toLocaleString()}
+                          </div>
+                          <div className="text-[11px] text-rose-400">
+                            Wall Size: {formatCompactUsd(orderBook.biggestAskWall.usd)}
+                          </div>
+                        </>
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-6 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  Fetch a Binance Futures pair above to inspect live orderbook whale walls.
+                </div>
+              )}
+            </div>
+
+            {/* Token Security, Liquidity & Listing Risk Audit */}
+            <div className="lg:col-span-6 rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-3.5 shadow-xl">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-400" />
+                    Token Security, Liquidity &amp; Listing Audit
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Flags Binance Alpha / Futures-only coins, thin liquidity, squeeze coils &amp; volatility traps
+                  </p>
+                </div>
+                {tokenAudit && (
+                  <span
+                    className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase border ${
+                      tokenAudit.overallRiskTier === "HIGH"
+                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                        : tokenAudit.overallRiskTier === "MODERATE"
+                        ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                        : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
+                    }`}
+                  >
+                    {tokenAudit.overallRiskTier} RISK
+                  </span>
+                )}
+              </div>
+
+              {tokenAudit ? (
+                <div className="space-y-2">
+                  {tokenAudit.chainName && tokenAudit.contractAddress && (
+                    <div className="px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-[11px] font-mono text-slate-300 flex flex-wrap items-center justify-between gap-1">
+                      <span>
+                        Chain: <strong className="text-sky-300">{tokenAudit.chainName}</strong>
+                      </span>
+                      <span className="text-slate-400 truncate max-w-[260px]" title={tokenAudit.contractAddress}>
+                        Contract: {tokenAudit.contractAddress}
+                      </span>
+                    </div>
+                  )}
+
+                  {tokenAudit.flags.map((f, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-2.5 rounded-xl border text-xs ${
+                        f.severity === "HIGH"
+                          ? "bg-rose-500/10 border-rose-500/30 text-rose-200"
+                          : f.severity === "MEDIUM"
+                          ? "bg-amber-500/10 border-amber-500/30 text-amber-200"
+                          : "bg-emerald-500/10 border-emerald-500/25 text-emerald-200"
+                      }`}
+                    >
+                      <div className="font-bold">{f.title}</div>
+                      <div className="text-[11px] opacity-85 mt-0.5">{f.detail}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-center text-xs text-slate-500 border border-dashed border-slate-800 rounded-xl">
+                  Token listing &amp; risk audit will appear after scanning a coin.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Trending Binance Futures Volume Spikes Radar */}
+          {trendingMovers.length > 0 && (
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-3 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Flame className="w-4 h-4 text-orange-400" />
+                    Hot Binance Futures Volume &amp; Momentum Spikes
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    Click any trending mover to immediately run full Sentiment + Order-Book Whale Wall + Security Audit
+                  </p>
+                </div>
+                <Link
+                  href="/copilot"
+                  className="text-xs font-semibold text-violet-300 hover:underline flex items-center gap-1"
+                >
+                  <Bot className="w-3.5 h-3.5" /> Ask AI Copilot →
+                </Link>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                {trendingMovers.map((m) => (
+                  <button
+                    key={m.symbol}
+                    type="button"
+                    onClick={() => fetchLiveSentiment(m.symbol)}
+                    className={`p-3 rounded-xl border text-left transition-all flex items-center justify-between gap-2 ${
+                      activeSymbol === m.symbol
+                        ? "bg-amber-500/15 border-amber-500/50"
+                        : "bg-slate-900/80 border-slate-800 hover:border-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <PairIcon symbol={m.symbol} size="sm" />
+                      <div className="min-w-0">
+                        <div className="font-mono font-bold text-xs text-white truncate">
+                          {m.symbol}
+                        </div>
+                        <div className="text-[10px] font-mono text-slate-400">
+                          Vol {formatCompactUsd(m.quoteVolumeUsd)}
+                        </div>
+                      </div>
+                    </div>
+                    <span
+                      className={`font-mono font-black text-xs flex-shrink-0 ${
+                        m.priceChangePct >= 0 ? "text-emerald-400" : "text-rose-400"
+                      }`}
+                    >
+                      {m.priceChangePct >= 0 ? "+" : ""}
+                      {m.priceChangePct}%
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </main>
       </div>
 

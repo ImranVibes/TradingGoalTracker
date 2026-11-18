@@ -13,6 +13,7 @@ import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { GoalCard } from "@/components/goals/GoalCard";
 import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
 import { SharePnlCardModal } from "@/components/analytics/SharePnlCardModal";
+import { LiveOpenPositionsPanel } from "@/components/dashboard/LiveOpenPositionsPanel";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { Trade, Goal, DashboardStats } from "@/lib/types";
 import { formatCurrency } from "@/lib/utils";
@@ -320,6 +321,9 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+
+          {/* Live Open Binance Positions & Active Daily Loss Limit Risk Monitor */}
+          <LiveOpenPositionsPanel accountId={activeAccountId} />
 
           {/* Living Account Balance & Drawdown Risk Hero Card */}
           <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 shadow-lg relative overflow-hidden">

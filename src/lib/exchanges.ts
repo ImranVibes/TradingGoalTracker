@@ -1,6 +1,26 @@
 import crypto from "crypto";
 import { Trade, Cashflow } from "./types";
 
+export interface LiveOpenPosition {
+  symbol: string;
+  direction: "LONG" | "SHORT";
+  positionSide: string;
+  positionAmt: number;
+  entryPrice: number;
+  markPrice: number;
+  liquidationPrice: number;
+  liquidationDistancePct: number | null;
+  leverage: number;
+  marginType: string;
+  unrealizedPnl: number;
+  roePct: number;
+  notionalUsd: number;
+  isolatedMargin: number;
+  connectionId?: string;
+  connectionLabel?: string;
+  accountId?: string;
+}
+
 export interface ExchangeSyncResult {
   success: boolean;
   exchange: string;
@@ -526,6 +546,33 @@ export class BinanceClient {
     return this.getFuturesClosedPositions(sinceMs);
   }
 
+  private async fetchFuturesSignedPost(
+    path: string,
+    params: Record<string, string | number | boolean | undefined> = {}
+  ) {
+    const queryParts: string[] = [];
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== null && v !== "") {
+        queryParts.push(`${k}=${encodeURIComponent(String(v))}`);
+      }
+    }
+    queryParts.push(`timestamp=${Date.now()}`);
+    queryParts.push(`recvWindow=10000`);
+    const query = queryParts.join("&");
+    const signature = this.sign(query);
+
+    const res = await fetch(`${this.futuresBase}${path}?${query}&signature=${signature}`, {
+      method: "POST",
+      headers: { "X-MBX-APIKEY": this.apiKey },
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ msg: res.statusText }));
+      throw new Error(err.msg || err.message || `Binance HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
   // Fetch Live Balances
   async getBalance(): Promise<number> {
     try {
@@ -534,6 +581,211 @@ export class BinanceClient {
     } catch {
       return 0;
     }
+  }
+
+  // Fetch Live Open Futures Positions + Account Equity
+  async getFuturesOpenPositions(): Promise<{
+    positions: LiveOpenPosition[];
+    accountEquity: number;
+    availableBalance: number;
+    totalUnrealizedPnl: number;
+  }> {
+    const [posRisks, account] = await Promise.all([
+      this.fetchFuturesSigned("/fapi/v2/positionRisk"),
+      this.fetchFuturesSigned("/fapi/v2/account").catch(() => null),
+    ]);
+
+    const positions: LiveOpenPosition[] = [];
+    let totalUnrealizedPnl = 0;
+
+    if (Array.isArray(posRisks)) {
+      for (const pr of posRisks) {
+        const rawAmt = parseFloat(pr.positionAmt || "0");
+        const absAmt = Math.abs(rawAmt);
+        if (absAmt <= 1e-10) continue;
+
+        const direction: "LONG" | "SHORT" =
+          pr.positionSide === "SHORT"
+            ? "SHORT"
+            : pr.positionSide === "LONG"
+            ? "LONG"
+            : rawAmt >= 0
+            ? "LONG"
+            : "SHORT";
+        const entryPrice = parseFloat(pr.entryPrice || "0");
+        const markPrice = parseFloat(pr.markPrice || "0");
+        const liquidationPrice = parseFloat(pr.liquidationPrice || "0");
+        const leverage = Math.max(1, parseInt(pr.leverage || "1", 10));
+        const unrealizedPnl = parseFloat(pr.unRealizedProfit || "0");
+        const notionalUsd = Math.abs(parseFloat(pr.notional || "0")) || absAmt * markPrice;
+        const isolatedMargin = parseFloat(pr.isolatedMargin || "0");
+        const initialMargin = notionalUsd / leverage;
+        const roePct = initialMargin > 0 ? Number(((unrealizedPnl / initialMargin) * 100).toFixed(2)) : 0;
+
+        let liquidationDistancePct: number | null = null;
+        if (liquidationPrice > 0 && markPrice > 0) {
+          liquidationDistancePct = Number(
+            ((Math.abs(markPrice - liquidationPrice) / markPrice) * 100).toFixed(2)
+          );
+        }
+
+        totalUnrealizedPnl += unrealizedPnl;
+        positions.push({
+          symbol: String(pr.symbol || "").toUpperCase(),
+          direction,
+          positionSide: String(pr.positionSide || "BOTH"),
+          positionAmt: absAmt,
+          entryPrice,
+          markPrice,
+          liquidationPrice,
+          liquidationDistancePct,
+          leverage,
+          marginType: String(pr.marginType || "cross").toUpperCase(),
+          unrealizedPnl: Number(unrealizedPnl.toFixed(2)),
+          roePct,
+          notionalUsd: Number(notionalUsd.toFixed(2)),
+          isolatedMargin: Number(isolatedMargin.toFixed(2)),
+        });
+      }
+    }
+
+    const accountEquity = parseFloat(
+      account?.totalMarginBalance || account?.totalWalletBalance || "0"
+    );
+    const availableBalance = parseFloat(account?.availableBalance || "0");
+
+    return {
+      positions: positions.sort((a, b) => Math.abs(b.notionalUsd) - Math.abs(a.notionalUsd)),
+      accountEquity: Number(accountEquity.toFixed(2)),
+      availableBalance: Number(availableBalance.toFixed(2)),
+      totalUnrealizedPnl: Number(totalUnrealizedPnl.toFixed(2)),
+    };
+  }
+
+  /**
+   * Place a Checklist-Gated Assisted Futures Order with mandatory Hard Stop-Loss
+   * and optional Take-Profit on an isolated Binance Agentic Sub-Account.
+   */
+  async placeProtectedFuturesOrder(opts: {
+    symbol: string;
+    direction: "LONG" | "SHORT";
+    quantity: number;
+    leverage: number;
+    stopLoss: number;
+    takeProfit?: number | null;
+    orderType?: "MARKET" | "LIMIT";
+    limitPrice?: number | null;
+  }): Promise<{
+    entryOrderId: string;
+    stopOrderId: string | null;
+    tpOrderId: string | null;
+    roundedQty: number;
+    roundedSl: number;
+    roundedTp: number | null;
+  }> {
+    const symbol = opts.symbol.trim().toUpperCase();
+
+    // 1. Fetch exchange precision rules (stepSize & tickSize)
+    const exInfoRes = await fetch(`${this.futuresBase}/fapi/v1/exchangeInfo`);
+    const exInfo = exInfoRes.ok ? await exInfoRes.json() : null;
+    const symInfo = exInfo?.symbols?.find((s: any) => s.symbol === symbol);
+    if (!symInfo) {
+      throw new Error(`Symbol ${symbol} is not listed on Binance USD-M Futures.`);
+    }
+
+    const lotFilter = symInfo.filters?.find((f: any) => f.filterType === "LOT_SIZE");
+    const priceFilter = symInfo.filters?.find((f: any) => f.filterType === "PRICE_FILTER");
+
+    const countDecimals = (stepStr?: string): number => {
+      if (!stepStr) return 3;
+      const trimmed = stepStr.replace(/0+$/, "");
+      const idx = trimmed.indexOf(".");
+      return idx === -1 ? 0 : trimmed.length - idx - 1;
+    };
+
+    const qtyDecimals = countDecimals(lotFilter?.stepSize);
+    const priceDecimals = countDecimals(priceFilter?.tickSize);
+    const stepSize = parseFloat(lotFilter?.stepSize || "0.001");
+    const minQty = parseFloat(lotFilter?.minQty || "0.001");
+
+    const rawRoundedQty = Math.floor(opts.quantity / stepSize) * stepSize;
+    const roundedQty = Number(rawRoundedQty.toFixed(qtyDecimals));
+    if (roundedQty < minQty) {
+      throw new Error(
+        `Calculated quantity (${roundedQty}) is below Binance minimum (${minQty}) for ${symbol}. Increase risk USD or tighten stop distance.`
+      );
+    }
+
+    const roundedSl = Number(opts.stopLoss.toFixed(priceDecimals));
+    const roundedTp =
+      opts.takeProfit && opts.takeProfit > 0 ? Number(opts.takeProfit.toFixed(priceDecimals)) : null;
+
+    // 2. Set leverage first
+    await this.fetchFuturesSignedPost("/fapi/v1/leverage", {
+      symbol,
+      leverage: Math.max(1, Math.round(opts.leverage)),
+    });
+
+    // 3. Place entry order
+    const entrySide = opts.direction === "LONG" ? "BUY" : "SELL";
+    const closeSide = opts.direction === "LONG" ? "SELL" : "BUY";
+    const isLimit = opts.orderType === "LIMIT" && opts.limitPrice && opts.limitPrice > 0;
+
+    const entryOrder = await this.fetchFuturesSignedPost("/fapi/v1/order", {
+      symbol,
+      side: entrySide,
+      type: isLimit ? "LIMIT" : "MARKET",
+      quantity: roundedQty,
+      ...(isLimit
+        ? {
+            price: Number(opts.limitPrice!.toFixed(priceDecimals)),
+            timeInForce: "GTC",
+          }
+        : {}),
+    });
+
+    // 4. Attach mandatory hard Stop-Loss (STOP_MARKET closePosition=true)
+    let stopOrderId: string | null = null;
+    try {
+      const slRes = await this.fetchFuturesSignedPost("/fapi/v1/order", {
+        symbol,
+        side: closeSide,
+        type: "STOP_MARKET",
+        stopPrice: roundedSl,
+        closePosition: "true",
+        workingType: "MARK_PRICE",
+      });
+      stopOrderId = slRes?.orderId ? String(slRes.orderId) : null;
+    } catch (slErr: any) {
+      console.error("[Binance Assisted Order] Stop-Loss attachment failed:", slErr?.message);
+    }
+
+    // 5. Attach optional Take-Profit (TAKE_PROFIT_MARKET closePosition=true)
+    let tpOrderId: string | null = null;
+    if (roundedTp) {
+      try {
+        const tpRes = await this.fetchFuturesSignedPost("/fapi/v1/order", {
+          symbol,
+          side: closeSide,
+          type: "TAKE_PROFIT_MARKET",
+          stopPrice: roundedTp,
+          closePosition: "true",
+          workingType: "MARK_PRICE",
+        });
+        tpOrderId = tpRes?.orderId ? String(tpRes.orderId) : null;
+      } catch (tpErr: any) {
+        console.error("[Binance Assisted Order] Take-Profit attachment failed:", tpErr?.message);
+      }
+    }
+
+    return {
+      entryOrderId: String(entryOrder?.orderId || ""),
+      stopOrderId,
+      tpOrderId,
+      roundedQty,
+      roundedSl,
+      roundedTp,
+    };
   }
 }
 

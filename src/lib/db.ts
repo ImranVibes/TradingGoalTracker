@@ -2076,6 +2076,39 @@ export async function getUserSettings(): Promise<UserSettings> {
   }
 }
 
+export async function getSettingValue<T = any>(key: string): Promise<T | null> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    const res = await p.query("SELECT value FROM tracker_settings WHERE key = $1", [key]);
+    if (res.rows.length > 0 && res.rows[0].value !== undefined) {
+      return res.rows[0].value as T;
+    }
+    return null;
+  } else {
+    const store = loadLocalStore();
+    return (store.settings?.[key] as T) ?? null;
+  }
+}
+
+export async function setSettingValue(key: string, value: any): Promise<void> {
+  const { isPostgres } = await checkConnection();
+  if (isPostgres) {
+    const p = getPool();
+    await p.query(
+      `INSERT INTO tracker_settings (key, value, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, JSON.stringify(value)]
+    );
+  } else {
+    const store = loadLocalStore();
+    if (!store.settings) store.settings = {};
+    store.settings[key] = value;
+    saveLocalStore(store);
+  }
+}
+
 export async function updateUserSettings(updates: Partial<UserSettings>): Promise<UserSettings> {
   const current = await getUserSettings();
   const updated: UserSettings = { ...current, ...updates };

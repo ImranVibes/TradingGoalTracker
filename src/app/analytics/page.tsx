@@ -8,6 +8,7 @@ import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { SharePnlCardModal } from "@/components/analytics/SharePnlCardModal";
+import { WeeklyReviewButton } from "@/components/analytics/WeeklyReviewButton";
 import { PairIcon } from "@/components/ui/PairIcon";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { DashboardStats, Trade } from "@/lib/types";
@@ -187,14 +188,17 @@ export default function AnalyticsPage() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={() => setIsShareCardOpen(true)}
-              className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-all inline-flex items-center gap-1.5 self-start sm:self-auto"
-            >
-              <Share2 className="w-3.5 h-3.5" />
-              Share PnL Card (PNG)
-            </button>
+            <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+              <WeeklyReviewButton accountId={activeAccountId} />
+              <button
+                type="button"
+                onClick={() => setIsShareCardOpen(true)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 transition-all inline-flex items-center gap-1.5"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                Share PnL Card (PNG)
+              </button>
+            </div>
           </div>
 
           {/* Core Risk & Expectancy Grid */}

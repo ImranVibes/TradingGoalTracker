@@ -19,6 +19,7 @@ import {
   CheckSquare,
   Compass,
   ClipboardCheck,
+  Bot,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,11 @@ export const NAV_ITEMS = [
     name: "Dashboard",
     href: "/",
     icon: LayoutDashboard,
+  },
+  {
+    name: "AI Copilot",
+    href: "/copilot",
+    icon: Bot,
   },
   {
     name: "Chart",

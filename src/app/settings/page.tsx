@@ -7,6 +7,7 @@ import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
+import { AgentOsSettingsSection } from "@/components/settings/AgentOsSettingsSection";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { ExchangeConnection, UserSettings } from "@/lib/types";
 import {
@@ -927,6 +928,9 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* SECTION 3.5: BINANCE AGENT OS, AI COPILOT & DAILY RISK GUARD */}
+          <AgentOsSettingsSection />
 
           {/* SECTION 4: SECURITY & ACCESS PIN */}
           <section className="space-y-4">

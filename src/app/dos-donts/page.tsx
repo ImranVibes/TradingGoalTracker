@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
+import { WeeklyReviewButton } from "@/components/analytics/WeeklyReviewButton";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { DosDontsTemplate, DailyDosDontsLog, DailyBehaviorItem } from "@/lib/types";
 import { toDateInputValue } from "@/lib/utils";
@@ -503,8 +504,10 @@ export default function DosDontsPage() {
               </div>
             </div>
 
-            {/* Date Navigator */}
-            <div className="flex items-center gap-1.5 bg-[#0f172a] border border-slate-800 p-1.5 rounded-xl self-start lg:self-auto">
+            {/* Date Navigator + Automated Weekly AI Review */}
+            <div className="flex flex-wrap items-center gap-2 self-start lg:self-auto">
+              <WeeklyReviewButton accountId={activeAccountId} />
+              <div className="flex items-center gap-1.5 bg-[#0f172a] border border-slate-800 p-1.5 rounded-xl">
               <button
                 type="button"
                 onClick={() => selectDateAndSyncMonth(shiftDateKey(selectedDate, -1))}
@@ -538,6 +541,7 @@ export default function DosDontsPage() {
                   Today
                 </button>
               )}
+              </div>
             </div>
           </div>
 
