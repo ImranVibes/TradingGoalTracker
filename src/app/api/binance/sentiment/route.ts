@@ -1,5 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { evaluateMarketSentiment, SentimentInput } from "@/lib/tradingMetrics";
+import {
+  Candle,
+  calculateEMA,
+  calculateRSI,
+  calculateBollingerBands,
+  calculateMACD,
+  calculateSuperTrend,
+  calculateVolumeProfile,
+  resolveConfluenceSR,
+  generateTradeGptDebate,
+} from "@/lib/technicalAnalysis";
 
 export const dynamic = "force-dynamic";
 
@@ -32,14 +43,21 @@ async function fetchJson(url: string, timeoutMs = 6000): Promise<any> {
   }
 }
 
-function calcEMA(values: number[], period: number): number | null {
-  if (values.length < period) return null;
-  const k = 2 / (period + 1);
-  let ema = values.slice(0, period).reduce((s, v) => s + v, 0) / period;
-  for (let i = period; i < values.length; i++) {
-    ema = values[i] * k + ema * (1 - k);
-  }
-  return ema;
+function parseKlines(raw: any[]): Candle[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((k: any) => ({
+    openTime: Number(k[0]),
+    open: Number(k[1]),
+    high: Number(k[2]),
+    low: Number(k[3]),
+    close: Number(k[4]),
+    volume: Number(k[5]),
+    closeTime: Number(k[6]),
+    quoteVolume: Number(k[7]),
+    trades: Number(k[8]),
+    takerBuyBaseVolume: Number(k[9]),
+    takerBuyQuoteVolume: Number(k[10]),
+  }));
 }
 
 // Cache trending tickers & token registries briefly to keep sentiment scans blazing fast
@@ -68,7 +86,6 @@ async function getTrendingFuturesMovers() {
     .map((t: any) => {
       const vol = Number(t.quoteVolume || 0);
       const pct = Number(t.priceChangePercent || 0);
-      // Score combines volume strength + strong directional momentum
       const heatScore = Math.log10(Math.max(1, vol)) * Math.abs(pct);
       return {
         symbol: String(t.symbol).toUpperCase(),
@@ -153,7 +170,8 @@ export async function GET(req: NextRequest) {
       whaleAcc,
       globalLs,
       takerLs,
-      klines4h,
+      klines4hRaw,
+      klines1hRaw,
       fng,
       depth,
       trendingMovers,
@@ -166,7 +184,8 @@ export async function GET(req: NextRequest) {
       fetchJson(`${base}/futures/data/topLongShortAccountRatio?symbol=${rawSym}&period=1h&limit=3`),
       fetchJson(`${base}/futures/data/globalLongShortAccountRatio?symbol=${rawSym}&period=1h&limit=3`),
       fetchJson(`${base}/futures/data/takerlongshortRatio?symbol=${rawSym}&period=1h&limit=3`),
-      fetchJson(`${base}/fapi/v1/klines?symbol=${rawSym}&interval=4h&limit=210`),
+      fetchJson(`${base}/fapi/v1/klines?symbol=${rawSym}&interval=4h&limit=150`),
+      fetchJson(`${base}/fapi/v1/klines?symbol=${rawSym}&interval=1h&limit=100`),
       fetchJson("https://api.alternative.me/fng/?limit=1"),
       fetchJson(`${base}/fapi/v1/depth?symbol=${rawSym}&limit=50`),
       getTrendingFuturesMovers(),
@@ -226,24 +245,36 @@ export async function GET(req: NextRequest) {
     const retailLongPct = Number(latestGlobalLs?.longAccount || 0.5) * 100;
     const takerBuySellRatio = Number(latestTaker?.buySellRatio || 1);
 
-    // 4H EMA 50 & EMA 200 trend structure
-    let ema50: number | null = null;
-    let ema200: number | null = null;
+    // Parse Candles & Technical Indicators
+    const candles4h = parseKlines(klines4hRaw);
+    const candles1h = parseKlines(klines1hRaw);
+    const closes4h = candles4h.map((c) => c.close);
+
+    const ema20Arr = calculateEMA(closes4h, 20);
+    const ema50Arr = calculateEMA(closes4h, 50);
+    const ema200Arr = calculateEMA(closes4h, 200);
+
+    const ema20 = ema20Arr.length > 0 && !isNaN(ema20Arr[ema20Arr.length - 1]) ? Number(ema20Arr[ema20Arr.length - 1].toFixed(4)) : null;
+    const ema50 = ema50Arr.length > 0 && !isNaN(ema50Arr[ema50Arr.length - 1]) ? Number(ema50Arr[ema50Arr.length - 1].toFixed(4)) : null;
+    const ema200 = ema200Arr.length > 0 && !isNaN(ema200Arr[ema200Arr.length - 1]) ? Number(ema200Arr[ema200Arr.length - 1].toFixed(4)) : null;
+
     let htfTrend: "BULLISH" | "NEUTRAL" | "BEARISH" = "NEUTRAL";
-    if (Array.isArray(klines4h) && klines4h.length >= 50) {
-      const closes = klines4h.map((k: any) => Number(k[4]));
-      ema50 = calcEMA(closes, 50);
-      ema200 = calcEMA(closes, 200);
-      if (ema50 !== null && ema200 !== null) {
-        if (lastPrice > ema50 && ema50 > ema200) htfTrend = "BULLISH";
-        else if (lastPrice < ema50 && ema50 < ema200) htfTrend = "BEARISH";
-        else if (lastPrice > ema50 * 1.008) htfTrend = "BULLISH";
-        else if (lastPrice < ema50 * 0.992) htfTrend = "BEARISH";
-      } else if (ema50 !== null) {
-        if (lastPrice > ema50 * 1.005) htfTrend = "BULLISH";
-        else if (lastPrice < ema50 * 0.995) htfTrend = "BEARISH";
-      }
+    if (ema50 !== null && ema200 !== null) {
+      if (lastPrice > ema50 && ema50 > ema200) htfTrend = "BULLISH";
+      else if (lastPrice < ema50 && ema50 < ema200) htfTrend = "BEARISH";
+      else if (lastPrice > ema50 * 1.008) htfTrend = "BULLISH";
+      else if (lastPrice < ema50 * 0.992) htfTrend = "BEARISH";
+    } else if (ema50 !== null) {
+      if (lastPrice > ema50 * 1.005) htfTrend = "BULLISH";
+      else if (lastPrice < ema50 * 0.995) htfTrend = "BEARISH";
     }
+
+    // Advanced Technicals: Bollinger Bands, Volume Profile, SuperTrend, MACD, RSI
+    const bollinger = calculateBollingerBands(closes4h, 20, 2);
+    const volumeProfile = calculateVolumeProfile(candles4h.slice(-100), 50);
+    const superTrend = calculateSuperTrend(candles4h, 10, 3);
+    const macd = calculateMACD(closes4h, 12, 26, 9);
+    const rsi14 = calculateRSI(closes4h, 14);
 
     // Order-Book Depth & Whale Wall Imbalance (Top 50 Bid/Ask Levels)
     let bidDepthUsd = 0;
@@ -282,7 +313,41 @@ export async function GET(req: NextRequest) {
         ? "SELL_WALL_DOMINANT"
         : "BALANCED";
 
-    // Token Security, Liquidity & Listing Risk Audit (Binance Skills Hub style)
+    // Confluence S/R Ladder Resolution (Bollinger + Volume Profile + Swings + Whale Walls)
+    const confluenceSR = resolveConfluenceSR({
+      currentPrice: lastPrice,
+      candles: candles4h,
+      bollinger,
+      volumeProfile,
+      whaleBidWall: biggestBidWall,
+      whaleAskWall: biggestAskWall,
+    });
+
+    // TradeGPT Bull vs Bear Multi-Agent Debate Engine
+    const tradeGptDebate = generateTradeGptDebate({
+      symbol: rawSym,
+      currentPrice: lastPrice,
+      candles4h,
+      candles1h,
+      ema20_4h: ema20,
+      ema50_4h: ema50,
+      ema200_4h: ema200,
+      rsi14,
+      macd,
+      superTrend,
+      bollinger,
+      volumeProfile,
+      fundingRatePct,
+      whaleLongShortRatio,
+      retailLongShortRatio,
+      takerBuySellRatio,
+      oiChangePct: oiChange24hPct !== 0 ? oiChange24hPct : oiChange4hPct,
+      priceChange24hPct,
+      whaleBidWall: biggestBidWall,
+      whaleAskWall: biggestAskWall,
+    });
+
+    // Token Security, Liquidity & Listing Risk Audit
     const range24hPct =
       low24h > 0 ? Number((((high24h - low24h) / low24h) * 100).toFixed(2)) : 0;
     const oiToVolRatio =
@@ -394,9 +459,22 @@ export async function GET(req: NextRequest) {
         nextFundingTime,
         whaleLongPct: Number(whaleLongPct.toFixed(1)),
         retailLongPct: Number(retailLongPct.toFixed(1)),
-        ema50: ema50 ? Number(ema50.toFixed(4)) : null,
-        ema200: ema200 ? Number(ema200.toFixed(4)) : null,
+        ema20,
+        ema50,
+        ema200,
         fearGreedLabel,
+      },
+      technicalAnalysis: {
+        bollinger,
+        volumeProfile,
+        superTrend,
+        macd,
+        rsi14,
+        ema20,
+        ema50,
+        ema200,
+        confluenceSR,
+        tradeGptDebate,
       },
       orderBook: {
         bidDepthUsd: Number(bidDepthUsd.toFixed(0)),

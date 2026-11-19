@@ -8,6 +8,8 @@ import { TradeFormModal } from "@/components/journal/TradeFormModal";
 import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { PairIcon } from "@/components/ui/PairIcon";
+import { SupportResistanceMatrix } from "@/components/sentiment/SupportResistanceMatrix";
+import { TradeGptDebateSection } from "@/components/sentiment/TradeGptDebateSection";
 import {
   evaluateMarketSentiment,
   SentimentInput,
@@ -89,6 +91,7 @@ export default function SentimentPage() {
   const [trendingMovers, setTrendingMovers] = useState<
     { symbol: string; lastPrice: number; priceChangePct: number; quoteVolumeUsd: number }[]
   >([]);
+  const [technicalAnalysis, setTechnicalAnalysis] = useState<any | null>(null);
 
   // Editable Sentiment Inputs (auto-filled from Binance Live, or manually edited anytime)
   const [input, setInput] = useState<SentimentInput>({
@@ -123,6 +126,7 @@ export default function SentimentPage() {
         setMarket(null);
         setOrderBook(null);
         setTokenAudit(null);
+        setTechnicalAnalysis(null);
         if (Array.isArray(data.trendingMovers)) setTrendingMovers(data.trendingMovers);
         setInput((prev) => ({ ...prev, symbol: clean }));
         return;
@@ -130,6 +134,7 @@ export default function SentimentPage() {
       setMarket(data.market);
       setOrderBook(data.orderBook || null);
       setTokenAudit(data.tokenAudit || null);
+      setTechnicalAnalysis(data.technicalAnalysis || null);
       if (Array.isArray(data.trendingMovers)) setTrendingMovers(data.trendingMovers);
       setInput(data.input);
       setLastFetchedAt(data.fetchedAt);
@@ -421,6 +426,20 @@ export default function SentimentPage() {
               </div>
             )}
           </div>
+
+          {/* 1. Automated Support & Resistance Confluence Ladder */}
+          <SupportResistanceMatrix
+            currentPrice={market?.lastPrice || 0}
+            symbol={activeSymbol}
+            data={technicalAnalysis}
+          />
+
+          {/* 2. TradeGPT Dual-Thesis Debate & Research Manager Synthesis */}
+          <TradeGptDebateSection
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+            debate={technicalAnalysis?.tradeGptDebate || null}
+          />
 
           {/* 2-Column Interactive Inputs (Left) + Factor Breakdown (Right) */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
