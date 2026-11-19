@@ -35,14 +35,23 @@ import {
   ChevronDown,
   ChevronUp,
   Target,
+  ZoomIn,
+  RotateCcw,
 } from "lucide-react";
 
 interface BinancePineChartProps {
   symbol: string;
   interval: string;
+  usePerp?: boolean;
+  onTogglePerp?: (val: boolean) => void;
 }
 
-export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, interval }) => {
+export const BinancePineChart: React.FC<BinancePineChartProps> = ({
+  symbol,
+  interval,
+  usePerp: externalUsePerp,
+  onTogglePerp,
+}) => {
   const mainContainerRef = useRef<HTMLDivElement | null>(null);
   const oscContainerRef = useRef<HTMLDivElement | null>(null);
 
@@ -54,8 +63,12 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
   const mainPriceLinesRef = useRef<any[]>([]);
   const oscSeriesRef = useRef<ISeriesApi<any>[]>([]);
 
+  const isInitialLoadRef = useRef(true);
+
   const [candles, setCandles] = useState<Candle[]>([]);
-  const [marketType, setMarketType] = useState<"futures" | "spot">("futures");
+  const [internalMarketType, setInternalMarketType] = useState<"futures" | "spot">("futures");
+  const marketType = externalUsePerp !== undefined ? (externalUsePerp ? "futures" : "spot") : internalMarketType;
+
   const [wsConnected, setWsConnected] = useState(false);
   const [loadingCandles, setLoadingCandles] = useState(true);
   const [candleError, setCandleError] = useState<string | null>(null);
@@ -67,8 +80,8 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
   // Saved Custom Indicators (PostgreSQL)
   const [savedIndicators, setSavedIndicators] = useState<CustomIndicator[]>([]);
 
-  // Active Pine Script Editor state
-  const [editorOpen, setEditorOpen] = useState(true);
+  // Active Pine Script Editor state (docked / collapsible)
+  const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [scriptName, setScriptName] = useState("EMA 9 / 21 Crossover Signals");
   const [scriptLang, setScriptLang] = useState<"pine" | "js">("pine");
@@ -119,11 +132,12 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
     let active = true;
     let ws: WebSocket | null = null;
 
+    isInitialLoadRef.current = true;
     setLoadingCandles(true);
     setCandleError(null);
     setWsConnected(false);
 
-    fetch(`/api/binance/klines?symbol=${encodeURIComponent(cleanSymbol)}&interval=${interval}&limit=500`)
+    fetch(`/api/binance/klines?symbol=${encodeURIComponent(cleanSymbol)}&interval=${interval}&limit=1000&market=${marketType}`)
       .then((r) => r.json())
       .then((data) => {
         if (!active) return;
@@ -134,7 +148,9 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
           return;
         }
         setCandles(data.candles);
-        setMarketType(data.market === "spot" ? "spot" : "futures");
+        if (externalUsePerp === undefined) {
+          setInternalMarketType(data.market === "spot" ? "spot" : "futures");
+        }
         setLoadingCandles(false);
 
         // Open Live WebSocket for real-time candle updates
@@ -176,7 +192,7 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
                   return next;
                 }
                 if (liveCandle.time > last.time) {
-                  return [...prev.slice(-499), liveCandle];
+                  return [...prev.slice(-999), liveCandle];
                 }
                 return prev;
               });
@@ -202,7 +218,7 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
         } catch {}
       }
     };
-  }, [cleanSymbol, interval]);
+  }, [cleanSymbol, interval, marketType, externalUsePerp]);
 
   // Execute all enabled saved indicators + active editor preview
   const runResults = useMemo(() => {
@@ -239,8 +255,8 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
     if (!el) return;
 
     const chart = createChart(el, {
-      width: el.clientWidth,
-      height: 500,
+      width: el.clientWidth || 800,
+      height: el.clientHeight || 720,
       layout: {
         background: { type: ColorType.Solid, color: "#090d16" },
         textColor: "#94a3b8",
@@ -261,6 +277,11 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
         borderColor: "#1e293b",
         timeVisible: true,
         secondsVisible: false,
+        barSpacing: 9,
+        minBarSpacing: 2,
+        rightOffset: 14,
+        fixLeftEdge: false,
+        fixRightEdge: false,
       },
     });
 
@@ -285,18 +306,25 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
     candleSeriesRef.current = candleSeries;
     volSeriesRef.current = volSeries;
 
-    const handleResize = () => {
-      if (el && mainChartRef.current) {
-        mainChartRef.current.applyOptions({ width: el.clientWidth });
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.target === el && mainChartRef.current) {
+          mainChartRef.current.applyOptions({
+            width: Math.floor(entry.contentRect.width),
+            height: Math.floor(entry.contentRect.height),
+          });
+        }
+        if (oscContainerRef.current && entry.target === oscContainerRef.current && oscChartRef.current) {
+          oscChartRef.current.applyOptions({
+            width: Math.floor(entry.contentRect.width),
+          });
+        }
       }
-      if (oscContainerRef.current && oscChartRef.current) {
-        oscChartRef.current.applyOptions({ width: oscContainerRef.current.clientWidth });
-      }
-    };
-    window.addEventListener("resize", handleResize);
+    });
+    resizeObserver.observe(el);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
+      resizeObserver.disconnect();
       chart.remove();
       mainChartRef.current = null;
       candleSeriesRef.current = null;
@@ -393,14 +421,26 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
         color: c.close >= c.open ? "rgba(34, 197, 94, 0.22)" : "rgba(239, 68, 68, 0.22)",
       }))
     );
+
+    // On initial batch load for this symbol/interval, scroll to recent candles with clean right padding
+    if (isInitialLoadRef.current && mainChartRef.current) {
+      isInitialLoadRef.current = false;
+      mainChartRef.current.timeScale().scrollToPosition(6, false);
+    }
   }, [candles]);
 
-  // Fit content when switching symbol or interval
-  useEffect(() => {
-    if (candles.length > 0 && mainChartRef.current) {
+  const handleFitContent = () => {
+    if (mainChartRef.current) {
       mainChartRef.current.timeScale().fitContent();
     }
-  }, [cleanSymbol, interval, candles.length === 0]);
+  };
+
+  const handleResetView = () => {
+    if (mainChartRef.current) {
+      mainChartRef.current.timeScale().resetTimeScale();
+      mainChartRef.current.timeScale().scrollToPosition(6, false);
+    }
+  };
 
   // Render Pine Script / JS Indicator Series, HLines, and Signal + Trade Markers
   useEffect(() => {
@@ -716,9 +756,9 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
       : 0;
 
   return (
-    <div className="space-y-4">
-      {/* Live Binance Chart Card */}
-      <div className="rounded-2xl border border-slate-800 bg-[#090d16] overflow-hidden shadow-xl">
+    <div className="flex-1 flex flex-col bg-[#090d16] w-full">
+      {/* Live Binance Chart Sub-Bar & Active Indicators */}
+      <div className="w-full flex-1 flex flex-col">
         {/* Top Ticker & Active Indicators Strip */}
         <div className="px-4 py-2.5 border-b border-slate-800 bg-[#0f172a] flex flex-wrap items-center justify-between gap-2 text-xs">
           <div className="flex items-center flex-wrap gap-3">
@@ -769,6 +809,26 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
           </div>
 
           <div className="flex items-center flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleFitContent}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-900 text-slate-300 border border-slate-800 hover:text-white hover:border-slate-700 transition-colors flex items-center gap-1"
+              title="Fit all historical candles onto screen"
+            >
+              <ZoomIn className="w-3 h-3 text-sky-400" />
+              Fit All
+            </button>
+
+            <button
+              type="button"
+              onClick={handleResetView}
+              className="px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-slate-900 text-slate-300 border border-slate-800 hover:text-white hover:border-slate-700 transition-colors flex items-center gap-1"
+              title="Reset view to current live price"
+            >
+              <RotateCcw className="w-3 h-3 text-emerald-400" />
+              Reset
+            </button>
+
             <button
               type="button"
               onClick={() => setShowMyTrades(!showMyTrades)}
@@ -856,7 +916,11 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
             </div>
           )}
 
-          <div ref={mainContainerRef} className="w-full h-[500px]" />
+          <div
+            ref={mainContainerRef}
+            className="w-full shrink-0"
+            style={{ height: "720px", minHeight: "680px" }}
+          />
 
           {/* Dynamic Lower Oscillator Pane (RSI, MACD, Stochastic, etc.) */}
           {hasOscillatorPane && (
@@ -870,9 +934,9 @@ export const BinancePineChart: React.FC<BinancePineChartProps> = ({ symbol, inte
         </div>
       </div>
 
-      {/* Pine Script & Custom Indicator Editor Studio */}
+      {/* Pine Script & Custom Indicator Editor Studio (Docked) */}
       {editorOpen && (
-        <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-4 sm:p-5 space-y-4 shadow-xl">
+        <div className="border-t border-slate-800 bg-[#0f172a] p-4 sm:p-5 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
             <div>
               <h3 className="text-sm font-bold text-white flex items-center gap-2">

@@ -25,22 +25,30 @@ export async function GET(req: NextRequest) {
     const rawSymbol = (searchParams.get("symbol") || "BTCUSDT").toUpperCase().replace(/[^A-Z0-9]/g, "");
     const rawInterval = searchParams.get("interval") || "15m";
     const interval = ALLOWED_INTERVALS.has(rawInterval) ? rawInterval : "15m";
-    const limit = Math.min(1000, Math.max(50, Number(searchParams.get("limit") || 500)));
+    const requestedMarket = searchParams.get("market"); // "futures" | "spot" | null
+    const limit = Math.min(1000, Math.max(50, Number(searchParams.get("limit") || 1000)));
 
     if (!rawSymbol || rawSymbol.length < 3 || rawSymbol.length > 24) {
       return NextResponse.json({ success: false, error: "Invalid symbol" }, { status: 400 });
     }
 
-    // Try Binance USDT-M Futures first
-    let market: "futures" | "spot" = "futures";
-    let res = await fetch(
-      `https://fapi.binance.com/fapi/v1/klines?symbol=${rawSymbol}&interval=${interval}&limit=${limit}`,
-      { cache: "no-store" }
-    );
+    let market: "futures" | "spot" = requestedMarket === "spot" ? "spot" : "futures";
+    let res: Response;
 
-    if (!res.ok) {
-      // Fallback to Binance Spot if not listed on Futures
-      market = "spot";
+    if (market === "futures") {
+      res = await fetch(
+        `https://fapi.binance.com/fapi/v1/klines?symbol=${rawSymbol}&interval=${interval}&limit=${limit}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok && !requestedMarket) {
+        // Fallback to Spot if not specified and Futures failed
+        market = "spot";
+        res = await fetch(
+          `https://api.binance.com/api/v3/klines?symbol=${rawSymbol}&interval=${interval}&limit=${limit}`,
+          { cache: "no-store" }
+        );
+      }
+    } else {
       res = await fetch(
         `https://api.binance.com/api/v3/klines?symbol=${rawSymbol}&interval=${interval}&limit=${limit}`,
         { cache: "no-store" }
