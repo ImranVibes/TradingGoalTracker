@@ -17,10 +17,13 @@ import {
   Menu,
   X,
   StickyNote,
+  SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "../ui/Button";
 import { useAccounts } from "../providers/AccountProvider";
 import { NAV_ITEMS } from "./Sidebar";
+import { useSidebarNavItems } from "@/lib/sidebarConfig";
+import { SidebarCustomizeModal } from "./SidebarCustomizeModal";
 import { cn, formatCurrency } from "@/lib/utils";
 
 interface NavbarProps {
@@ -40,6 +43,12 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { accounts, activeAccountId, setActiveAccountId, autoSyncStatus } = useAccounts();
+  const {
+    items: navItems,
+    openModal: openSidebarCustomizeModal,
+    isModalOpen: isSidebarCustomizeOpen,
+    closeModal: closeSidebarCustomizeModal,
+  } = useSidebarNavItems();
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -225,7 +234,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             <nav className="space-y-1 flex-1">
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const isActive = pathname === item.href;
                 const Icon = item.icon;
                 return (
@@ -252,7 +261,22 @@ export const Navbar: React.FC<NavbarProps> = ({
               })}
             </nav>
 
-            <div className="pt-3 mt-3 border-t border-slate-800 grid grid-cols-2 gap-2">
+            {/* Mobile Customize Sidebar Button */}
+            <div className="pt-2.5 mt-2 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMobileMenuOpen(false);
+                  openSidebarCustomizeModal();
+                }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-300 bg-slate-900 border border-slate-800 hover:border-slate-700 transition-colors"
+              >
+                <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
+                <span>Customize Menu Order</span>
+              </button>
+            </div>
+
+            <div className="pt-3 mt-2 border-t border-slate-800 grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => {
@@ -277,6 +301,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
       )}
+
+      {/* Mobile-triggered Sidebar Customize Modal */}
+      <SidebarCustomizeModal
+        isOpen={isSidebarCustomizeOpen}
+        onClose={closeSidebarCustomizeModal}
+      />
     </>
   );
 };

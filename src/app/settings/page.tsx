@@ -8,6 +8,8 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { SelectiveImportModal } from "@/components/exchanges/SelectiveImportModal";
 import { AgentOsSettingsSection } from "@/components/settings/AgentOsSettingsSection";
+import { SidebarCustomizeModal } from "@/components/layout/SidebarCustomizeModal";
+import { useSidebarNavItems } from "@/lib/sidebarConfig";
 import { useAccounts } from "@/components/providers/AccountProvider";
 import { ExchangeConnection, UserSettings } from "@/lib/types";
 import {
@@ -32,6 +34,13 @@ import {
 
 export default function SettingsPage() {
   const { accounts, refreshAccounts } = useAccounts();
+  const {
+    isCustomized: isSidebarCustomized,
+    openModal: openSidebarModal,
+    isModalOpen: isSidebarModalOpen,
+    closeModal: closeSidebarModal,
+    items: sidebarNavItems,
+  } = useSidebarNavItems();
 
   const [settings, setSettings] = useState<UserSettings>({
     initial_balance: 10000,
@@ -932,6 +941,76 @@ export default function SettingsPage() {
           {/* SECTION 3.5: BINANCE AGENT OS, AI COPILOT & DAILY RISK GUARD */}
           <AgentOsSettingsSection />
 
+          {/* SECTION 3.8: NAVIGATION & SIDEBAR CUSTOMIZATION */}
+          <section className="space-y-4">
+            <div className="border-b border-slate-800 pb-3 flex items-center justify-between">
+              <div>
+                <h2 className="text-base font-bold text-white flex items-center gap-2">
+                  <Sliders className="w-4 h-4 text-sky-400" />
+                  Navigation & Sidebar Customization
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Reorder menu items to match your trading workflow (e.g. place Positions Journal right after Dashboard).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={openSidebarModal}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-slate-950 flex items-center gap-1.5 shadow-sm transition-all"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                Customize Menu
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="text-xs font-semibold text-white">Current Sidebar Layout</span>
+                    {isSidebarCustomized ? (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/15 border border-sky-500/30 text-sky-300 font-medium">
+                        Customized
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-400 font-medium">
+                        Default Order
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400 max-w-xl">
+                    Drag and drop or use arrow buttons to place your most critical trading tools at the top. Synced securely to your database and local storage.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={openSidebarModal}
+                  className="px-3 py-2 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-900 border border-slate-700 hover:border-slate-600 transition-colors flex items-center gap-1.5"
+                >
+                  <span>Reorder & Show/Hide Items ({sidebarNavItems.length})</span>
+                </button>
+              </div>
+
+              {/* Quick sequence preview */}
+              <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-slate-500 mr-1">Current order:</span>
+                {sidebarNavItems.map((item, idx) => (
+                  <span
+                    key={item.id}
+                    className={`text-[10px] px-2 py-0.5 rounded-md border flex items-center gap-1 font-mono ${
+                      item.id === "journal"
+                        ? "bg-amber-500/15 border-amber-500/30 text-amber-300"
+                        : "bg-slate-900 border-slate-800 text-slate-300"
+                    }`}
+                  >
+                    <span className="text-slate-500">{idx + 1}.</span> {item.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </section>
+
           {/* SECTION 4: SECURITY & ACCESS PIN */}
           <section className="space-y-4">
             <div className="border-b border-slate-800 pb-3">
@@ -1053,6 +1132,11 @@ export default function SettingsPage() {
           refreshAccounts();
           setTimeout(() => setSyncStatus(null), 5000);
         }}
+      />
+
+      <SidebarCustomizeModal
+        isOpen={isSidebarModalOpen}
+        onClose={closeSidebarModal}
       />
     </div>
   );
