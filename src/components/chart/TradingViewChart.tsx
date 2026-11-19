@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useMemo } from "react";
 
 interface TradingViewChartProps {
   symbol: string;
@@ -27,8 +27,6 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
   interval,
   usePerp = true,
 }) => {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
   const cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   // For Gold/Silver commodities and crypto on Binance:
   // Binance Futures uses BINANCE:XAUUSDT.P or BINANCE:BTCUSDT.P
@@ -36,58 +34,49 @@ export const TradingViewChart: React.FC<TradingViewChartProps> = ({
   const tvSymbol = usePerp ? `BINANCE:${cleanSymbol}.P` : `BINANCE:${cleanSymbol}`;
   const tvInterval = TV_INTERVAL_MAP[interval] || "15";
 
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    container.innerHTML = "";
-
-    const widgetWrapper = document.createElement("div");
-    widgetWrapper.className = "tradingview-widget-container__widget";
-    widgetWrapper.style.height = "100%";
-    widgetWrapper.style.minHeight = "720px";
-    widgetWrapper.style.width = "100%";
-    container.appendChild(widgetWrapper);
-
-    const script = document.createElement("script");
-    script.src = "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
-    script.type = "text/javascript";
-    script.async = true;
-    script.innerHTML = JSON.stringify({
-      autosize: true,
+  // Build direct TradingView widget embed URL.
+  // This bypasses external script injection race conditions and enforces strict 100% / 760px container height.
+  const iframeSrc = useMemo(() => {
+    const params = {
       symbol: tvSymbol,
+      frameElementId: "tradingview_advanced_chart",
       interval: tvInterval,
-      timezone: "Etc/UTC",
+      hide_side_toolbar: "0",
+      hide_top_toolbar: "0",
+      allow_symbol_change: "1",
+      save_image: "1",
       theme: "dark",
       style: "1",
-      locale: "en",
-      backgroundColor: "rgba(9, 13, 22, 1)",
-      gridColor: "rgba(30, 41, 59, 0.45)",
-      allow_symbol_change: true,
-      calendar: false,
-      hide_side_toolbar: false,
-      hide_top_toolbar: false,
-      withdateranges: true,
-      save_image: true,
-      details: false,
-      hotlist: false,
-      support_host: "https://www.tradingview.com",
-    });
-
-    container.appendChild(script);
-
-    return () => {
-      if (container) container.innerHTML = "";
+      timezone: "Etc/UTC",
+      withdateranges: "1",
+      studies: [],
+      utm_source: "trading.vibetools.digital",
+      utm_medium: "widget",
+      utm_campaign: "chart",
+      page_uri: "trading.vibetools.digital/chart",
     };
+
+    return `https://s.tradingview.com/widgetembed/?hideideas=1&overrides=%7B%7D&enabled_features=%5B%5D&disabled_features=%5B%5D&locale=en#${encodeURIComponent(
+      JSON.stringify(params)
+    )}`;
   }, [tvSymbol, tvInterval]);
 
   return (
-    <div className="w-full h-full flex-1 flex flex-col bg-[#090d16] shrink-0">
-      {/* TradingView Advanced Chart Canvas */}
-      <div
-        ref={containerRef}
-        className="tradingview-widget-container w-full shrink-0 flex-1"
-        style={{ height: "calc(100vh - 200px)", minHeight: "720px", width: "100%" }}
+    <div className="w-full flex-1 flex flex-col bg-[#090d16] shrink-0 min-h-[750px]">
+      <iframe
+        id="tradingview_advanced_chart_iframe"
+        key={`${tvSymbol}_${tvInterval}`}
+        src={iframeSrc}
+        title={`TradingView Chart - ${tvSymbol}`}
+        className="w-full shrink-0 border-0 bg-[#090d16]"
+        style={{
+          height: "760px",
+          minHeight: "750px",
+          width: "100%",
+          display: "block",
+        }}
+        allow="clipboard-write; fullscreen"
+        allowFullScreen
       />
     </div>
   );

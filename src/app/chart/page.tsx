@@ -10,7 +10,6 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { PairIcon } from "@/components/ui/PairIcon";
 import {
-  CandlestickChart,
   Code2,
   Search,
   LineChart,
@@ -126,42 +125,42 @@ export default function ChartPage() {
               isFullscreen ? "p-3 bg-[#090d16] h-screen w-screen" : "w-full"
             }`}
           >
-            {/* Primary TradingView-Style Integrated Navigation Bar */}
-            <div className="px-3 sm:px-4 py-2 bg-[#0c1222] border-b border-slate-800 flex flex-wrap items-center justify-between gap-2.5">
+            {/* Primary TradingView-Style Integrated Navigation Bar (Non-wrapping single row) */}
+            <div className="px-3 sm:px-4 py-2 bg-[#0c1222] border-b border-slate-800 flex items-center justify-between gap-2 overflow-x-auto">
               {/* Left Side: Symbol Selector directly followed by Timeframe Toolbar (TradingView UX) */}
-              <div className="flex items-center flex-wrap gap-2 sm:gap-2.5">
+              <div className="flex items-center gap-2 shrink-0">
                 {/* Symbol Search Form */}
-                <form onSubmit={handleSymbolSubmit} className="flex items-center gap-1.5">
+                <form onSubmit={handleSymbolSubmit} className="flex items-center gap-1.5 shrink-0">
                   <PairIcon symbol={symbol} size="sm" showQuoteBadge />
                   <div className="relative flex items-center">
-                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 pointer-events-none" />
                     <input
                       type="text"
                       value={symbolInput}
                       onChange={(e) => setSymbolInput(e.target.value.toUpperCase())}
                       placeholder="Symbol"
-                      className="w-32 sm:w-36 rounded-lg bg-slate-900 border border-slate-700 pl-8 pr-2.5 py-1.5 text-xs font-mono font-bold text-white uppercase focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/50"
+                      className="w-24 sm:w-32 rounded-lg bg-slate-900 border border-slate-700 pl-7 pr-2 py-1 text-xs font-mono font-bold text-white uppercase focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500/50"
                     />
                   </div>
                   <button
                     type="submit"
-                    className="px-2 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
+                    className="px-2 py-1 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors"
                   >
                     Go
                   </button>
                 </form>
 
                 {/* Vertical Divider */}
-                <div className="hidden sm:block w-px h-6 bg-slate-800" />
+                <div className="w-px h-5 bg-slate-800 shrink-0" />
 
                 {/* Timeframes Bar - Sits directly beside symbol on the right (TradingView layout) */}
-                <div className="flex items-center gap-0.5 bg-slate-900 p-0.5 rounded-lg border border-slate-800/90 overflow-x-auto">
+                <div className="flex items-center gap-0.5 bg-slate-900 p-0.5 rounded-lg border border-slate-800/90 shrink-0">
                   {TIMEFRAMES.map((tf) => (
                     <button
                       key={tf}
                       type="button"
                       onClick={() => setInterval(tf)}
-                      className={`px-2 py-1 rounded-md text-[11px] font-mono font-bold transition-all ${
+                      className={`px-1.5 sm:px-2 py-0.5 rounded-md text-[11px] font-mono font-bold transition-all ${
                         interval === tf
                           ? "bg-sky-500 text-white shadow-sm"
                           : "text-slate-400 hover:text-white hover:bg-slate-800/60"
@@ -174,14 +173,14 @@ export default function ChartPage() {
                 </div>
 
                 {/* Vertical Divider */}
-                <div className="hidden md:block w-px h-6 bg-slate-800" />
+                <div className="w-px h-5 bg-slate-800 shrink-0" />
 
                 {/* Chart Engine Switcher */}
-                <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-0.5 bg-slate-900 p-0.5 rounded-lg border border-slate-800 shrink-0">
                   <button
                     type="button"
                     onClick={() => setChartMode("tradingview")}
-                    className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    className={`px-2 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${
                       chartMode === "tradingview"
                         ? "bg-sky-600 text-white shadow-sm"
                         : "text-slate-400 hover:text-white"
@@ -194,7 +193,7 @@ export default function ChartPage() {
                   <button
                     type="button"
                     onClick={() => setChartMode("binance")}
-                    className={`px-2.5 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1.5 ${
+                    className={`px-2 py-1 rounded-md text-xs font-bold transition-all flex items-center gap-1 ${
                       chartMode === "binance"
                         ? "bg-amber-500 text-slate-950 shadow-sm"
                         : "text-slate-400 hover:text-white"
@@ -202,15 +201,12 @@ export default function ChartPage() {
                     title="Binance Live WebSocket + Custom Pine Script Indicator Studio"
                   >
                     <Code2 className="w-3.5 h-3.5" />
-                    Binance Live + Pine
+                    Binance Live
                   </button>
                 </div>
-              </div>
 
-              {/* Right Side: Market Contract Type + Fullscreen + Log Trade */}
-              <div className="flex items-center flex-wrap gap-2">
                 {/* Contract Toggle */}
-                <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                <div className="flex items-center gap-0.5 bg-slate-900 p-0.5 rounded-lg border border-slate-800 shrink-0">
                   <button
                     type="button"
                     onClick={() => setUsePerp(true)}
@@ -230,18 +226,19 @@ export default function ChartPage() {
                     Spot
                   </button>
                 </div>
+              </div>
 
-                {/* Fullscreen Button */}
+              {/* Right Side: Fullscreen + Log Trade */}
+              <div className="flex items-center gap-1.5 shrink-0">
                 <button
                   type="button"
                   onClick={toggleFullscreen}
-                  className="p-1.5 rounded-lg bg-slate-900 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700 transition-colors"
+                  className="p-1 rounded-lg bg-slate-900 text-slate-400 hover:text-white border border-slate-800 hover:border-slate-700 transition-colors"
                   title={isFullscreen ? "Exit Fullscreen" : "Fullscreen Chart"}
                 >
                   {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                 </button>
 
-                {/* Quick Log Trade */}
                 <button
                   type="button"
                   onClick={() => setIsTradeModalOpen(true)}
@@ -276,7 +273,7 @@ export default function ChartPage() {
             </div>
 
             {/* Chart View (TradingView or Binance Pine Script Engine) */}
-            <div className="flex-1 w-full bg-[#090d16] flex flex-col">
+            <div className="flex-1 w-full bg-[#090d16] flex flex-col min-h-[750px]">
               {chartMode === "tradingview" ? (
                 <TradingViewChart
                   symbol={symbol}
