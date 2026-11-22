@@ -10,6 +10,7 @@ import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { PairIcon } from "@/components/ui/PairIcon";
 import { SupportResistanceMatrix } from "@/components/sentiment/SupportResistanceMatrix";
 import { TradeGptDebateSection } from "@/components/sentiment/TradeGptDebateSection";
+import { MarketMakerSentinel } from "@/components/sentiment/MarketMakerSentinel";
 import {
   evaluateMarketSentiment,
   SentimentInput,
@@ -92,6 +93,7 @@ export default function SentimentPage() {
     { symbol: string; lastPrice: number; priceChangePct: number; quoteVolumeUsd: number }[]
   >([]);
   const [technicalAnalysis, setTechnicalAnalysis] = useState<any | null>(null);
+  const [marketMakerFlow, setMarketMakerFlow] = useState<any | null>(null);
 
   // Editable Sentiment Inputs (auto-filled from Binance Live, or manually edited anytime)
   const [input, setInput] = useState<SentimentInput>({
@@ -127,6 +129,7 @@ export default function SentimentPage() {
         setOrderBook(null);
         setTokenAudit(null);
         setTechnicalAnalysis(null);
+        setMarketMakerFlow(null);
         if (Array.isArray(data.trendingMovers)) setTrendingMovers(data.trendingMovers);
         setInput((prev) => ({ ...prev, symbol: clean }));
         return;
@@ -135,6 +138,7 @@ export default function SentimentPage() {
       setOrderBook(data.orderBook || null);
       setTokenAudit(data.tokenAudit || null);
       setTechnicalAnalysis(data.technicalAnalysis || null);
+      setMarketMakerFlow(data.marketMakerFlow || null);
       if (Array.isArray(data.trendingMovers)) setTrendingMovers(data.trendingMovers);
       setInput(data.input);
       setLastFetchedAt(data.fetchedAt);
@@ -427,14 +431,21 @@ export default function SentimentPage() {
             )}
           </div>
 
-          {/* 1. Automated Support & Resistance Confluence Ladder */}
+          {/* 1. Market Maker & Cross-Exchange Whale Sentinel */}
+          <MarketMakerSentinel
+            flow={marketMakerFlow}
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+          />
+
+          {/* 2. Automated Support & Resistance Confluence Ladder */}
           <SupportResistanceMatrix
             currentPrice={market?.lastPrice || 0}
             symbol={activeSymbol}
             data={technicalAnalysis}
           />
 
-          {/* 2. TradeGPT Dual-Thesis Debate & Research Manager Synthesis */}
+          {/* 3. TradeGPT Dual-Thesis Debate & Research Manager Synthesis */}
           <TradeGptDebateSection
             symbol={activeSymbol}
             currentPrice={market?.lastPrice || 0}

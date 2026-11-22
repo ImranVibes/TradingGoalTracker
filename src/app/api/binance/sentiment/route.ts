@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { evaluateMarketSentiment, SentimentInput } from "@/lib/tradingMetrics";
+import { fetchCrossExchangeMarketMakerFlow } from "@/lib/marketMakerFlow";
 import {
   Candle,
   calculateEMA,
@@ -442,6 +443,22 @@ export async function GET(req: NextRequest) {
 
     const report = evaluateMarketSentiment(input);
 
+    const marketMakerFlow = await fetchCrossExchangeMarketMakerFlow({
+      symbol: rawSym,
+      baseAsset,
+      currentPrice: lastPrice,
+      binanceOiUsd: openInterestUsd,
+      binanceOiChange24hPct: oiChange24hPct,
+      fundingRatePct,
+      whaleLongShortRatio,
+      retailLongShortRatio,
+      takerBuySellRatio,
+      bidDepthUsd,
+      askDepthUsd,
+      biggestBidWall,
+      biggestAskWall,
+    });
+
     return NextResponse.json({
       success: true,
       symbol: rawSym,
@@ -464,6 +481,7 @@ export async function GET(req: NextRequest) {
         ema200,
         fearGreedLabel,
       },
+      marketMakerFlow,
       technicalAnalysis: {
         bollinger,
         volumeProfile,

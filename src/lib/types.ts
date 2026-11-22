@@ -61,6 +61,12 @@ export interface Trade {
   tags?: string[];
   mistake_tags?: string[];
   discipline_score?: number | null;
+  linked_note_ids?: string[];
+  mae_price?: number | null;
+  mfe_price?: number | null;
+  mae_usd?: number | null;
+  mfe_usd?: number | null;
+  chart_image_url?: string;
   created_at: string;
   updated_at: string;
 }
@@ -265,8 +271,20 @@ export interface TradingNote {
   is_pinned: boolean;
   note_date: string;
   image_url?: string;
+  linked_trade_id?: string;
+  checklist_progress?: { total: number; completed: number; percent: number };
   created_at: string;
   updated_at?: string;
+}
+
+export interface NotificationSettings {
+  telegram_bot_token?: string;
+  telegram_chat_id?: string;
+  discord_webhook_url?: string;
+  notify_daily_loss: boolean;
+  notify_extreme_funding: boolean;
+  notify_tradegpt_signals: boolean;
+  daily_loss_notified_date?: string;
 }
 
 export interface ChecklistItem {
