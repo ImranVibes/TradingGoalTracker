@@ -125,6 +125,11 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
 
   const base = baseAsset.toUpperCase();
 
+  // Detect token multiplier (e.g. 1000PEPE, 1000SHIB, 1000000MOG) to ensure 100% accurate per-token pricing
+  const multiplierMatch = symbol.match(/^(1000000|100000|10000|1000)/);
+  const symbolMultiplier = multiplierMatch ? Number(multiplierMatch[1]) : 1;
+  const singleTokenPrice = symbolMultiplier > 1 && currentPrice > 0 ? currentPrice / symbolMultiplier : currentPrice;
+
   // Run all parallel queries across OKX, Bybit, Bitget, Gate.io, Upbit, and Deribit
   const [okxData, bybitData, bitgetData, gateData, upbitData, deribitData] = await Promise.all([
     // 1. OKX Open Interest
@@ -137,51 +142,53 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
         );
         if (res?.data?.[0]?.oi) {
           const contracts = Number(res.data[0].oi || 0);
+          const rawOiUsd = Number(res.data[0].oiUsd || 0);
           const ccy = Number(res.data[0].oiCcy || 0);
-          const usd = ccy > 0 ? ccy * currentPrice : contracts * currentPrice;
+          const usd = rawOiUsd > 0 ? rawOiUsd : ccy > 0 ? ccy * singleTokenPrice : contracts * currentPrice;
           return { name: "OKX Swap", oiUsd: usd, oiContracts: contracts, identifier: instId };
         }
       }
       return { name: "OKX Swap", oiUsd: 0, oiContracts: 0, identifier: null };
     })(),
 
-    // 2. Bybit Open Interest
+    // 2. Bybit Open Interest (Ticker provides direct official openInterestValue)
     (async () => {
-      const candidates = [`${base}USDT`, `1000${base}USDT`];
+      const candidates = [`${base}USDT`, `1000${base}USDT`, symbol];
       for (const sym of candidates) {
         const res = await fetchWithTimeout(
-          `https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${sym}&intervalTime=5min&limit=1`,
+          `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${sym}`,
           3500
         );
-        if (res?.result?.list?.[0]?.openInterest) {
-          const contracts = Number(res.result.list[0].openInterest || 0);
-          const usd = contracts * currentPrice;
-          return { name: "Bybit Linear", oiUsd: usd, oiContracts: contracts, identifier: sym };
+        const item = res?.result?.list?.[0];
+        if (item?.openInterestValue || item?.openInterest) {
+          const usd = Number(item.openInterestValue || 0);
+          const contracts = Number(item.openInterest || 0);
+          return { name: "Bybit Linear", oiUsd: usd > 0 ? usd : contracts * singleTokenPrice, oiContracts: contracts, identifier: sym };
         }
       }
       return { name: "Bybit Linear", oiUsd: 0, oiContracts: 0, identifier: null };
     })(),
 
-    // 3. Bitget Open Interest
+    // 3. Bitget Open Interest (Size is in base tokens; normalized with singleTokenPrice)
     (async () => {
-      const candidates = [`${base}USDT`, `1000${base}USDT`];
+      const candidates = [`${base}USDT`, symbol, `1000${base}USDT`];
       for (const sym of candidates) {
         const res = await fetchWithTimeout(
           `https://api.bitget.com/api/v2/mix/market/open-interest?productType=USDT-FUTURES&symbol=${sym}`,
           3500
         );
         if (res?.data?.openInterestList?.[0]?.size) {
-          const contracts = Number(res.data.openInterestList[0].size || 0);
-          const usd = contracts * currentPrice;
-          return { name: "Bitget Futures", oiUsd: usd, oiContracts: contracts, identifier: sym };
+          const tokens = Number(res.data.openInterestList[0].size || 0);
+          const usd = tokens * singleTokenPrice;
+          return { name: "Bitget Futures", oiUsd: usd, oiContracts: tokens, identifier: sym };
         }
       }
       return { name: "Bitget Futures", oiUsd: 0, oiContracts: 0, identifier: null };
     })(),
 
-    // 4. Gate.io Open Interest
+    // 4. Gate.io Open Interest (position_size * quanto_multiplier * singleTokenPrice)
     (async () => {
-      const candidates = [`${base}_USDT`, `1000_${base}_USDT`];
+      const candidates = [`${base}_USDT`, symbol.replace("USDT", "_USDT"), `1000_${base}_USDT`];
       for (const c of candidates) {
         const res = await fetchWithTimeout(
           `https://api.gateio.ws/api/v4/futures/usdt/contracts/${c}`,
@@ -189,14 +196,15 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
         );
         if (res?.position_size) {
           const contracts = Number(res.position_size || 0);
-          const usd = contracts * currentPrice;
+          const multiplier = Number(res.quanto_multiplier || 1);
+          const usd = contracts * multiplier * singleTokenPrice;
           return { name: "Gate.io Futures", oiUsd: usd, oiContracts: contracts, identifier: c };
         }
       }
       return { name: "Gate.io Futures", oiUsd: 0, oiContracts: 0, identifier: null };
     })(),
 
-    // 5. Upbit Arbitrage (Kimchi Premium)
+    // 5. Upbit Arbitrage (Kimchi Premium spread normalized against singleTokenPrice)
     (async () => {
       try {
         const [usdtRes, coinRes] = await Promise.all([
@@ -206,18 +214,21 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
         if (usdtRes?.[0]?.trade_price && coinRes?.[0]?.trade_price) {
           const usdtRate = Number(usdtRes[0].trade_price);
           const coinKrw = Number(coinRes[0].trade_price);
-          const upbitUsd = coinKrw / usdtRate;
-          const premiumPct = ((upbitUsd - currentPrice) / currentPrice) * 100;
+          const upbitSingleUsd = coinKrw / usdtRate;
+          const premiumPct = ((upbitSingleUsd - singleTokenPrice) / singleTokenPrice) * 100;
           let signal: UpbitArbitrageData["signal"] = "NORMAL";
           if (premiumPct >= 3.5) signal = "EXTREME_RETAIL_FOMO";
           else if (premiumPct >= 1.2) signal = "MODERATE_PREMIUM";
           else if (premiumPct <= -2.0) signal = "PANIC_DISCOUNT";
 
+          // Align display USD with currentPrice scale (e.g. 1000x for 1000PEPE) for seamless reading
+          const alignedPriceUsd = upbitSingleUsd * symbolMultiplier;
+
           return {
             available: true,
             market: `KRW-${base}`,
             priceKrw: coinKrw,
-            priceUsd: Number(upbitUsd.toFixed(4)),
+            priceUsd: Number(alignedPriceUsd.toFixed(symbolMultiplier > 1 ? 6 : 4)),
             usdtKrwRate: usdtRate,
             kimchiPremiumPct: Number(premiumPct.toFixed(2)),
             signal,
