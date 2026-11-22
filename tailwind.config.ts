@@ -30,7 +30,8 @@ const config: Config = {
         },
       },
       fontFamily: {
-        mono: ["var(--font-mono)", "JetBrains Mono", "ui-monospace", "monospace"],
+        sans: ["'Plus Jakarta Sans'", "system-ui", "-apple-system", "sans-serif"],
+        mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
       },
       boxShadow: {
         glow: "0 0 25px -5px rgba(56, 189, 248, 0.2)",
