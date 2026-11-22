@@ -11,6 +11,7 @@ import { PairIcon } from "@/components/ui/PairIcon";
 import { SupportResistanceMatrix } from "@/components/sentiment/SupportResistanceMatrix";
 import { TradeGptDebateSection } from "@/components/sentiment/TradeGptDebateSection";
 import { MarketMakerSentinel } from "@/components/sentiment/MarketMakerSentinel";
+import { BeginnerExecutiveSummary } from "@/components/sentiment/BeginnerExecutiveSummary";
 import {
   evaluateMarketSentiment,
   SentimentInput,
@@ -330,6 +331,18 @@ export default function SentimentPage() {
               </div>
             )}
           </div>
+
+          {/* BEGINNER EXECUTIVE SUMMARY & QUICK TRADE PLAN */}
+          <BeginnerExecutiveSummary
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+            report={report}
+            marketMakerFlow={marketMakerFlow}
+            technicalAnalysis={technicalAnalysis}
+            fundingRatePct={input.fundingRatePct}
+            whaleRatio={marketMakerFlow?.smartMoneyMetrics?.whaleRatio}
+            retailRatio={marketMakerFlow?.smartMoneyMetrics?.retailRatio}
+          />
 
           {/* HERO DIRECTION VERDICT CARD */}
           <div className={`rounded-2xl border p-5 sm:p-6 shadow-2xl space-y-5 ${zoneStyles.border} ${zoneStyles.bg}`}>
