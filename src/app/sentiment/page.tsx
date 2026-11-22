@@ -344,68 +344,68 @@ export default function SentimentPage() {
             retailRatio={marketMakerFlow?.smartMoneyMetrics?.retailRatio}
           />
 
-          {/* HERO DIRECTION VERDICT CARD */}
-          <div className={`rounded-2xl border p-5 sm:p-6 shadow-2xl space-y-5 ${zoneStyles.border} ${zoneStyles.bg}`}>
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="space-y-2">
+          {/* ALGORITHMIC SENTIMENT SPECTRUM & RULE ENGINE */}
+          <div className={`rounded-3xl border p-6 sm:p-8 shadow-2xl space-y-6 ${zoneStyles.border} ${zoneStyles.bg}`}>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              <div className="space-y-2.5">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider border ${zoneStyles.badge}`}>
+                  <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${zoneStyles.badge}`}>
                     {report.zoneLabel}
                   </span>
-                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-semibold bg-slate-900/80 text-slate-300 border border-slate-700/80">
+                  <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-slate-900/80 text-slate-300 border border-slate-700/80">
                     Confluence Agreement: {report.confidencePct}%
                   </span>
                   {lastFetchedAt && (
-                    <span className="text-[11px] text-slate-400 font-mono">
+                    <span className="text-xs text-slate-400 font-mono">
                       Live synced {new Date(lastFetchedAt).toLocaleTimeString()}
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-4">
                   {report.allowedDirection === "LONG_ONLY" ? (
-                    <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                      <TrendingUp className="w-7 h-7" />
+                    <div className="p-3 rounded-2xl bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                      <TrendingUp className="w-8 h-8 stroke-[2.5]" />
                     </div>
                   ) : report.allowedDirection === "SHORT_ONLY" ? (
-                    <div className="p-2.5 rounded-xl bg-rose-500/20 text-rose-300 border border-rose-500/30">
-                      <TrendingDown className="w-7 h-7" />
+                    <div className="p-3 rounded-2xl bg-rose-500/20 text-rose-300 border border-rose-500/30">
+                      <TrendingDown className="w-8 h-8 stroke-[2.5]" />
                     </div>
                   ) : (
-                    <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                      <PauseCircle className="w-7 h-7" />
+                    <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      <PauseCircle className="w-8 h-8 stroke-[2.5]" />
                     </div>
                   )}
 
                   <div>
-                    <div className="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">
-                      Allowed Trade Direction for {activeSymbol}
-                    </div>
+                    <span className="text-xs uppercase tracking-widest text-slate-400 font-bold block">
+                      Algorithmic Sentiment Filter
+                    </span>
                     <h2 className={`text-2xl sm:text-3xl font-black tracking-tight ${zoneStyles.headline}`}>
                       {report.directionHeadline}
                     </h2>
                   </div>
                 </div>
 
-                <p className="text-xs sm:text-sm text-slate-200 max-w-2xl leading-relaxed bg-slate-950/50 border border-slate-800/80 rounded-xl p-3">
+                <p className="text-xs sm:text-sm text-slate-200 max-w-2xl leading-relaxed bg-slate-950/60 border border-slate-800/80 rounded-2xl p-3.5">
                   <strong className="text-white">Strict Rule:</strong> {report.strictRule}
                 </p>
               </div>
 
               {/* Big Score Readout */}
-              <div className="flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-2 p-4 rounded-2xl bg-slate-950/70 border border-slate-800 min-w-[170px]">
-                <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold">
+              <div className="flex flex-row lg:flex-col items-center justify-between lg:justify-center gap-2 p-5 rounded-3xl bg-slate-950/80 border border-slate-800 min-w-[190px]">
+                <span className="text-xs uppercase tracking-wider text-slate-400 font-bold">
                   Sentiment Score
                 </span>
                 <span className={`text-4xl sm:text-5xl font-black font-mono num-tabular ${zoneStyles.headline}`}>
                   {report.score > 0 ? `+${report.score}` : report.score}
                 </span>
-                <span className="text-[11px] font-mono text-slate-500">Scale: -100 to +100</span>
+                <span className="text-xs font-mono text-slate-500">Scale: -100 to +100</span>
               </div>
             </div>
 
             {/* 5-Zone Spectrum Gauge */}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <div className="relative h-4 rounded-full overflow-hidden bg-gradient-to-r from-rose-600 via-amber-500 to-emerald-500 p-0.5 shadow-inner">
                 {/* Zone dividers */}
                 <div className="absolute inset-0 flex pointer-events-none">
@@ -417,11 +417,11 @@ export default function SentimentPage() {
                 </div>
                 {/* Pointer */}
                 <div
-                  className="absolute top-0 bottom-0 w-1.5 bg-white rounded-full shadow-[0_0_12px_rgba(255,255,255,0.95)] transition-all duration-300"
-                  style={{ left: `calc(${gaugePct}% - 3px)` }}
+                  className="absolute top-0 bottom-0 w-2 bg-white rounded-full shadow-[0_0_12px_rgba(255,255,255,0.95)] transition-all duration-300"
+                  style={{ left: `calc(${gaugePct}% - 4px)` }}
                 />
               </div>
-              <div className="grid grid-cols-5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <div className="grid grid-cols-5 text-xs font-bold uppercase tracking-wider text-slate-400">
                 <span className="text-rose-400">Too Bearish</span>
                 <span className="text-rose-300 text-center">Bearish</span>
                 <span className="text-amber-300 text-center">Neutral</span>

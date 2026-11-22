@@ -87,68 +87,68 @@ export const SupportResistanceMatrix: React.FC<SupportResistanceMatrixProps> = (
   };
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-5 shadow-xl">
+    <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
         <div>
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <Layers className="w-4 h-4 text-sky-400" />
-            Automated Support &amp; Resistance Confluence Ladder
+          <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2.5">
+            <Layers className="w-6 h-6 text-sky-400" />
+            Support &amp; Resistance Confluence Ladder
           </h3>
-          <p className="text-[11px] text-slate-400 mt-0.5">
-            Real multi-touch swing pivots, Bollinger Bands volatility boundaries, Volume Profile POC, and live order book walls
+          <p className="text-xs sm:text-sm text-slate-400 mt-1">
+            Real multi-touch swing pivots, Bollinger Bands volatility boundaries, Volume Profile POC &amp; Order Book Walls
           </p>
         </div>
 
         {confluenceSR?.rangeLocation && (
-          <div className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-700/80 text-[11px] font-semibold text-slate-200 flex items-center gap-1.5">
-            <Target className="w-3.5 h-3.5 text-amber-400" />
+          <div className="px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-200 flex items-center gap-2 shadow-sm">
+            <Target className="w-4 h-4 text-amber-400" />
             <span>{confluenceSR.rangeLocation}</span>
           </div>
         )}
       </div>
 
       {/* S/R Price Ladder & Proximity Gauge */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Visual Ladder */}
-        <div className="lg:col-span-7 space-y-2">
-          <div className="text-[10px] uppercase font-bold tracking-wider text-slate-400 mb-1 flex items-center justify-between">
+        <div className="lg:col-span-7 space-y-3">
+          <div className="text-xs uppercase font-bold tracking-widest text-slate-400 mb-1 flex items-center justify-between">
             <span>Level &amp; Type</span>
             <span>Confluence Sources &amp; Strength</span>
           </div>
 
           {/* Resistances (Top to Bottom, closest to current price last) */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {confluenceSR?.resistanceLadder
               .slice(0, 3)
               .reverse()
               .map((res, idx) => (
                 <div
                   key={idx}
-                  className="p-2.5 rounded-xl bg-rose-950/20 border border-rose-900/40 flex items-center justify-between gap-3 text-xs hover:border-rose-700/60 transition-colors"
+                  className="p-3.5 rounded-2xl bg-rose-950/20 border border-rose-900/40 flex items-center justify-between gap-3 text-xs hover:border-rose-700/60 transition-colors"
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-6 h-6 rounded-lg bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center font-bold text-[10px] font-mono">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-8 h-8 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center font-black text-xs font-mono">
                       R{confluenceSR.resistanceLadder.length - idx}
                     </span>
                     <div>
-                      <div className="font-mono font-bold text-rose-300">
+                      <div className="font-mono text-base font-black text-rose-300">
                         ${res.price.toLocaleString()}
                       </div>
-                      <div className="text-[10px] text-rose-400/80 font-mono">
+                      <div className="text-xs text-rose-400/80 font-mono">
                         +{res.distancePct}% above current
                       </div>
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[60%]">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border font-mono ${getStrengthBadge(res.strength)}`}>
+                    <span className={`px-2.5 py-1 rounded text-xs font-bold border font-mono ${getStrengthBadge(res.strength)}`}>
                       {res.strength.replace("_", " ")}
                     </span>
                     {res.sources.map((src, sIdx) => (
                       <span
                         key={sIdx}
-                        className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 truncate"
+                        className="text-[11px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-300 truncate"
                         title={src}
                       >
                         {src}
@@ -160,30 +160,30 @@ export const SupportResistanceMatrix: React.FC<SupportResistanceMatrixProps> = (
           </div>
 
           {/* CURRENT MARKET PRICE BAR */}
-          <div className="p-3 rounded-xl bg-slate-900 border-2 border-sky-500/50 shadow-md shadow-sky-500/10 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <span className="relative flex h-3 w-3">
+          <div className="p-4 rounded-2xl bg-slate-900 border-2 border-sky-500/50 shadow-lg shadow-sky-500/10 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <span className="relative flex h-3.5 w-3.5">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-sky-500"></span>
+                <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-sky-500"></span>
               </span>
               <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                <span className="text-[11px] font-bold uppercase tracking-widest text-slate-400 block">
                   Current Market Price
                 </span>
-                <div className="text-base font-black font-mono text-white">
+                <div className="text-2xl sm:text-3xl font-black font-mono text-white tracking-tight">
                   ${currentPrice.toLocaleString()}
                 </div>
               </div>
             </div>
 
-            <div className="text-right text-[11px] font-mono">
+            <div className="text-right text-xs font-mono">
               {confluenceSR?.nearestResistance && (
-                <div className="text-rose-400">
+                <div className="text-rose-400 font-bold">
                   Next R: ${confluenceSR.nearestResistance.price.toLocaleString()} (+{confluenceSR.nearestResistance.distancePct}%)
                 </div>
               )}
               {confluenceSR?.nearestSupport && (
-                <div className="text-emerald-400">
+                <div className="text-emerald-400 font-bold mt-0.5">
                   Next S: ${confluenceSR.nearestSupport.price.toLocaleString()} ({confluenceSR.nearestSupport.distancePct}%)
                 </div>
               )}
@@ -191,28 +191,28 @@ export const SupportResistanceMatrix: React.FC<SupportResistanceMatrixProps> = (
           </div>
 
           {/* Supports (Nearest to furthest down) */}
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {confluenceSR?.supportLadder.slice(0, 3).map((sup, idx) => (
               <div
                 key={idx}
-                className="p-2.5 rounded-xl bg-emerald-950/20 border border-emerald-900/40 flex items-center justify-between gap-3 text-xs hover:border-emerald-700/60 transition-colors"
+                className="p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-900/40 flex items-center justify-between gap-3 text-xs hover:border-emerald-700/60 transition-colors"
               >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <span className="w-6 h-6 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-bold text-[10px] font-mono">
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="w-8 h-8 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 flex items-center justify-center font-black text-xs font-mono">
                     S{idx + 1}
                   </span>
                   <div>
-                    <div className="font-mono font-bold text-emerald-300">
+                    <div className="font-mono text-base font-black text-emerald-300">
                       ${sup.price.toLocaleString()}
                     </div>
-                    <div className="text-[10px] text-emerald-400/80 font-mono">
+                    <div className="text-xs text-emerald-400/80 font-mono">
                       {sup.distancePct}% below current
                     </div>
                   </div>
                 </div>
 
                 <div className="flex flex-wrap items-center justify-end gap-1.5 max-w-[60%]">
-                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold border font-mono ${getStrengthBadge(sup.strength)}`}>
+                  <span className={`px-2.5 py-1 rounded text-xs font-bold border font-mono ${getStrengthBadge(sup.strength)}`}>
                     {sup.strength.replace("_", " ")}
                   </span>
                   {sup.sources.map((src, sIdx) => (

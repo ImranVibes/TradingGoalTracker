@@ -40,30 +40,32 @@ export const TradeGptDebateSection: React.FC<TradeGptDebateSectionProps> = ({
   const isBullDominant = bullScore > bearScore;
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-5 shadow-xl">
+    <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400">
-            <BrainCircuit className="w-4 h-4" />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-5">
+        <div className="flex items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-violet-400 shadow-inner">
+            <BrainCircuit className="w-6 h-6" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              TradeGPT Dual-Thesis Debate &amp; Research Manager Synthesis
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-violet-500/15 border border-violet-500/30 text-violet-300">
-                Institutional AI Model
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                TradeGPT Dual-Thesis Debate
+              </h2>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-violet-500/15 border border-violet-500/30 text-violet-300">
+                Institutional AI Desk
               </span>
-            </h3>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              Simulates a live multi-analyst trading desk: Bull Advocate vs. Bear Advocate with Head of Research verdict
+            </div>
+            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
+              Simulates a live multi-analyst trading desk: Bull Advocate vs. Bear Advocate with Head of Research decision
             </p>
           </div>
         </div>
 
         {/* Conviction Bar */}
-        <div className="flex items-center gap-2 min-w-[200px]">
-          <span className="text-xs font-mono font-bold text-emerald-400">{bullScore}% Bull</span>
-          <div className="flex-1 h-3 rounded-full bg-slate-950 p-0.5 flex overflow-hidden border border-slate-800">
+        <div className="flex items-center gap-3 min-w-[240px]">
+          <span className="text-xs font-mono font-black text-emerald-400">{bullScore}% Bull</span>
+          <div className="flex-1 h-3.5 rounded-full bg-slate-950 p-0.5 flex overflow-hidden border border-slate-800">
             <div
               className="bg-emerald-500 rounded-l-full transition-all duration-500"
               style={{ width: `${bullScore}%` }}
@@ -73,30 +75,30 @@ export const TradeGptDebateSection: React.FC<TradeGptDebateSectionProps> = ({
               style={{ width: `${bearScore}%` }}
             />
           </div>
-          <span className="text-xs font-mono font-bold text-rose-400">{bearScore}% Bear</span>
+          <span className="text-xs font-mono font-black text-rose-400">{bearScore}% Bear</span>
         </div>
       </div>
 
       {/* Head of Research / Lead Verdict Card */}
       <div
-        className={`p-4 rounded-xl border transition-all ${
+        className={`p-6 rounded-2xl border transition-all space-y-3 ${
           netEdge === "BULLISH"
-            ? "bg-gradient-to-r from-emerald-950/40 via-slate-900 to-[#0f172a] border-emerald-500/40"
+            ? "bg-gradient-to-r from-emerald-950/40 via-slate-900 to-[#0c1322] border-emerald-500/40"
             : netEdge === "BEARISH"
-            ? "bg-gradient-to-r from-rose-950/40 via-slate-900 to-[#0f172a] border-rose-500/40"
-            : "bg-gradient-to-r from-amber-950/40 via-slate-900 to-[#0f172a] border-amber-500/40"
+            ? "bg-gradient-to-r from-rose-950/40 via-slate-900 to-[#0c1322] border-rose-500/40"
+            : "bg-gradient-to-r from-amber-950/40 via-slate-900 to-[#0c1322] border-amber-500/40"
         }`}
       >
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <Scale className="w-4 h-4 text-sky-400" />
-            <span className="text-[11px] uppercase tracking-wider font-bold text-slate-300">
+            <Scale className="w-5 h-5 text-sky-400" />
+            <span className="text-xs uppercase tracking-widest font-bold text-slate-300">
               Chief Research Manager Decision
             </span>
           </div>
 
           <span
-            className={`px-3 py-1 rounded-full text-xs font-black tracking-wide border ${
+            className={`px-3.5 py-1 rounded-full text-xs font-black tracking-wide border ${
               netEdge === "BULLISH"
                 ? "bg-emerald-500/20 text-emerald-300 border-emerald-400/40"
                 : netEdge === "BEARISH"
@@ -108,44 +110,44 @@ export const TradeGptDebateSection: React.FC<TradeGptDebateSectionProps> = ({
           </span>
         </div>
 
-        <p className="text-xs text-slate-200 leading-relaxed font-medium mb-3">
+        <p className="text-sm text-slate-200 leading-relaxed font-medium">
           {researchManagerVerdict.actionPlan}
         </p>
 
         {/* 4-Box Key Execution Targets */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-slate-800/80">
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-800/80">
+          <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
               Optimal Long Zone
             </span>
-            <span className="text-xs font-mono font-bold text-emerald-400 truncate block">
+            <span className="text-sm sm:text-base font-mono font-black text-emerald-400 truncate block">
               {researchManagerVerdict.optimalLongZone}
             </span>
           </div>
 
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+          <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
               Optimal Short Zone
             </span>
-            <span className="text-xs font-mono font-bold text-rose-400 truncate block">
+            <span className="text-sm sm:text-base font-mono font-black text-rose-400 truncate block">
               {researchManagerVerdict.optimalShortZone}
             </span>
           </div>
 
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+          <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
               Key Trend Pivot
             </span>
-            <span className="text-xs font-mono font-bold text-sky-400 truncate block">
+            <span className="text-sm sm:text-base font-mono font-black text-sky-400 truncate block">
               ${researchManagerVerdict.keyPivotLevel.toLocaleString()}
             </span>
           </div>
 
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
-            <span className="text-[10px] uppercase font-bold text-slate-400 block">
+          <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 space-y-1">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
               Hard Invalidation
             </span>
-            <span className="text-xs font-mono font-bold text-amber-400 truncate block">
+            <span className="text-sm sm:text-base font-mono font-black text-amber-400 truncate block">
               ${researchManagerVerdict.invalidationLevel.toLocaleString()}
             </span>
           </div>
