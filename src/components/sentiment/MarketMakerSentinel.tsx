@@ -3,19 +3,21 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import {
-  ShieldAlert,
   TrendingDown,
   TrendingUp,
-  Flame,
   Activity,
   Layers,
   Bot,
   Copy,
   Check,
   ExternalLink,
-  Info,
-  Sparkles,
   Zap,
+  Globe,
+  Target,
+  ArrowUpRight,
+  ArrowDownRight,
+  Compass,
+  Scale,
 } from "lucide-react";
 import { MarketMakerFlowResult } from "@/lib/marketMakerFlow";
 
@@ -31,15 +33,13 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
   currentPrice,
 }) => {
   const [copied, setCopied] = useState(false);
-  const [showAiBreakdown, setShowAiBreakdown] = useState(false);
 
   if (!flow) return null;
 
   const {
-    exchanges,
+    intelligence,
     marketMakerState,
     stateTitle,
-    stateDescription,
     beginnerVerdict,
     smartMoneyMetrics,
     aiPromptDigest,
@@ -55,21 +55,28 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
     switch (beginnerVerdict.actionBadgeColor) {
       case "emerald":
         return {
-          card: "bg-emerald-950/30 border-emerald-500/40",
+          card: "bg-emerald-950/25 border-emerald-500/40",
           badge: "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
           text: "text-emerald-400",
           icon: TrendingUp,
         };
       case "rose":
         return {
-          card: "bg-rose-950/30 border-rose-500/40",
+          card: "bg-rose-950/25 border-rose-500/40",
           badge: "bg-rose-500/20 text-rose-300 border-rose-500/40",
           text: "text-rose-400",
           icon: TrendingDown,
         };
+      case "purple":
+        return {
+          card: "bg-purple-950/25 border-purple-500/40",
+          badge: "bg-purple-500/20 text-purple-300 border-purple-500/40",
+          text: "text-purple-400",
+          icon: Compass,
+        };
       default:
         return {
-          card: "bg-amber-950/30 border-amber-500/40",
+          card: "bg-amber-950/25 border-amber-500/40",
           badge: "bg-amber-500/20 text-amber-300 border-amber-500/40",
           text: "text-amber-400",
           icon: Activity,
@@ -81,7 +88,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
   const ActionIcon = style.icon;
 
   const formatMillions = (usd: number) => {
-    if (!usd) return "$0";
+    if (!usd || usd <= 0) return "$0";
     if (usd >= 1e9) return `$${(usd / 1e9).toFixed(2)}B`;
     if (usd >= 1e6) return `$${(usd / 1e6).toFixed(1)}M`;
     if (usd >= 1e3) return `$${(usd / 1e3).toFixed(0)}K`;
@@ -89,11 +96,11 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
   };
 
   return (
-    <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-5 shadow-xl">
+    <div className="rounded-2xl border border-slate-800 bg-[#0f172a] p-5 space-y-5 shadow-2xl">
       {/* Header with Live Status Alert */}
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center text-orange-400 shadow-inner">
             <Zap className="w-4 h-4" />
           </div>
           <div>
@@ -104,20 +111,22 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
               </span>
             </h3>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              Tracks real-time leverage across Binance, OKX &amp; Bybit to spot market maker dumps before retail feels the crash
+              Real-time intelligence from 5 Tier-1 derivatives exchanges, Deribit Options &amp; Upbit Korea Arbitrage
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <span
-            className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 ${
+            className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-1.5 shadow-sm ${
               marketMakerState === "WHALE_DUMP_ALERT"
                 ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
                 : marketMakerState === "INSTITUTIONAL_ACCUMULATION"
                 ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
                 : marketMakerState === "SHORT_SQUEEZE_FUEL"
                 ? "bg-sky-500/20 text-sky-300 border-sky-500/40"
+                : marketMakerState === "OPTIONS_GRAVITY_PULL"
+                ? "bg-purple-500/20 text-purple-300 border-purple-500/40 animate-pulse"
                 : "bg-amber-500/20 text-amber-300 border-amber-500/40"
             }`}
           >
@@ -127,10 +136,10 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
       </div>
 
       {/* Beginner-Friendly Action Decision Card */}
-      <div className={`p-4 rounded-xl border ${style.card} space-y-3`}>
+      <div className={`p-4 rounded-xl border ${style.card} space-y-3.5 shadow-lg`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <div className={`p-1.5 rounded-lg ${style.badge}`}>
+          <div className="flex items-center gap-2.5">
+            <div className={`p-2 rounded-lg border ${style.badge}`}>
               <ActionIcon className="w-4 h-4" />
             </div>
             <div>
@@ -144,7 +153,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-mono uppercase text-slate-400">Risk Level:</span>
+            <span className="text-[10px] font-mono uppercase text-slate-400">Risk Tier:</span>
             <span
               className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
                 beginnerVerdict.riskTier === "HIGH" || beginnerVerdict.riskTier === "EXTREME"
@@ -160,14 +169,14 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
         </div>
 
         {/* Plain English "Why" explanation */}
-        <p className="text-xs text-slate-200 leading-relaxed font-medium bg-slate-950/60 border border-slate-800/80 rounded-xl p-3">
+        <p className="text-xs text-slate-200 leading-relaxed font-medium bg-slate-950/70 border border-slate-800 rounded-xl p-3 shadow-inner">
           <strong className="text-white block mb-0.5">What is happening in plain English:</strong>
           {beginnerVerdict.plainEnglishWhy}
         </p>
 
         {/* Rules and Entry/Exit Guidance */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
               Golden Rule
             </span>
@@ -176,7 +185,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
             </span>
           </div>
 
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
               Optimal Entry Zone
             </span>
@@ -185,7 +194,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
             </span>
           </div>
 
-          <div className="p-2.5 rounded-lg bg-slate-950/60 border border-slate-800">
+          <div className="p-2.5 rounded-lg bg-slate-950/70 border border-slate-800">
             <span className="text-[10px] uppercase font-bold text-slate-400 block mb-0.5">
               Safety Stop-Loss Price
             </span>
@@ -196,85 +205,271 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
         </div>
       </div>
 
-      {/* Cross-Exchange Open Interest (Derivatives Leverage) Grid */}
+      {/* Cross-Exchange Open Interest (5 Tier-1 Exchanges) */}
       <div>
-        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+        <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center justify-between">
           <span className="flex items-center gap-1.5">
             <Layers className="w-3.5 h-3.5 text-sky-400" />
-            Cross-Exchange Futures Open Interest (Live Leverage Tracker)
+            5 Tier-1 Exchanges Futures Open Interest (Global Leverage Monitor)
           </span>
           <span className="font-mono text-white text-xs">
-            Total Monitored:{" "}
-            <strong className="text-sky-400">{formatMillions(exchanges.totalMonitoredOiUsd)}</strong>
+            Total Monitored Leverage:{" "}
+            <strong className="text-sky-400 font-black">
+              {formatMillions(intelligence.totalMonitoredOiUsd)}
+            </strong>
           </span>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* Binance */}
-          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+          {/* 1. Binance */}
+          <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                Binance Futures
+                <span className="w-2 h-2 rounded-full bg-amber-400 shadow-sm shadow-amber-400/50"></span>
+                Binance
               </span>
-              <span
-                className={`text-[10px] font-mono font-bold ${
-                  exchanges.binanceOiChange24hPct >= 0 ? "text-emerald-400" : "text-rose-400"
-                }`}
-              >
-                {exchanges.binanceOiChange24hPct >= 0 ? "+" : ""}
-                {exchanges.binanceOiChange24hPct}% (24h)
-              </span>
+              {intelligence.binance.change24hPct !== undefined && (
+                <span
+                  className={`text-[10px] font-mono font-bold ${
+                    intelligence.binance.change24hPct >= 0 ? "text-emerald-400" : "text-rose-400"
+                  }`}
+                >
+                  {intelligence.binance.change24hPct >= 0 ? "+" : ""}
+                  {intelligence.binance.change24hPct}%
+                </span>
+              )}
             </div>
-            <div className="text-base font-black font-mono text-white">
-              {formatMillions(exchanges.binanceOiUsd)}
+            <div className="text-sm font-black font-mono text-white">
+              {formatMillions(intelligence.binance.oiUsd)}
             </div>
-            <div className="text-[10px] text-slate-400">Largest global liquidity pool</div>
+            <div className="text-[10px] text-slate-400 truncate">
+              {intelligence.binance.identifier || symbol}
+            </div>
           </div>
 
-          {/* OKX */}
-          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
+          {/* 2. OKX */}
+          <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-sky-400"></span>
+                <span className="w-2 h-2 rounded-full bg-sky-400 shadow-sm shadow-sky-400/50"></span>
                 OKX Swap
               </span>
-              <span className="text-[10px] font-mono text-slate-400">
-                {exchanges.okxInstrumentId || "Active"}
+              <span className="text-[9px] font-mono text-slate-400 truncate max-w-[65px]">
+                {intelligence.okx.identifier ? "Linked" : "No Swap"}
               </span>
             </div>
-            <div className="text-base font-black font-mono text-white">
-              {exchanges.okxOiUsd > 0 ? formatMillions(exchanges.okxOiUsd) : "Live Tracking"}
+            <div className="text-sm font-black font-mono text-white">
+              {intelligence.okx.oiUsd > 0 ? formatMillions(intelligence.okx.oiUsd) : "Tracking"}
             </div>
-            <div className="text-[10px] text-slate-400 font-mono">
-              {exchanges.okxOiContracts > 0
-                ? `${exchanges.okxOiContracts.toLocaleString()} contracts`
-                : "Institutional routing"}
+            <div className="text-[10px] text-slate-400 truncate font-mono">
+              {intelligence.okx.oiContracts > 0
+                ? `${intelligence.okx.oiContracts.toLocaleString()} c`
+                : "Active pool"}
             </div>
           </div>
 
-          {/* Bybit */}
-          <div className="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
+          {/* 3. Bybit */}
+          <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-orange-400"></span>
+                <span className="w-2 h-2 rounded-full bg-orange-400 shadow-sm shadow-orange-400/50"></span>
                 Bybit Linear
               </span>
-              <span className="text-[10px] font-mono text-slate-400">
-                {exchanges.bybitSymbol || "Active"}
+              <span className="text-[9px] font-mono text-slate-400 truncate max-w-[65px]">
+                {intelligence.bybit.identifier ? "Linked" : "No Perp"}
               </span>
             </div>
-            <div className="text-base font-black font-mono text-white">
-              {exchanges.bybitOiUsd > 0 ? formatMillions(exchanges.bybitOiUsd) : "Live Tracking"}
+            <div className="text-sm font-black font-mono text-white">
+              {intelligence.bybit.oiUsd > 0 ? formatMillions(intelligence.bybit.oiUsd) : "Tracking"}
             </div>
-            <div className="text-[10px] text-slate-400 font-mono">
-              {exchanges.bybitOiContracts > 0
-                ? `${exchanges.bybitOiContracts.toLocaleString()} contracts`
-                : "Active perp linear"}
+            <div className="text-[10px] text-slate-400 truncate font-mono">
+              {intelligence.bybit.oiContracts > 0
+                ? `${intelligence.bybit.oiContracts.toLocaleString()} c`
+                : "Perp linear"}
+            </div>
+          </div>
+
+          {/* 4. Bitget */}
+          <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-sm shadow-cyan-400/50"></span>
+                Bitget Mix
+              </span>
+              <span className="text-[9px] font-mono text-slate-400 truncate max-w-[65px]">
+                {intelligence.bitget.identifier ? "Linked" : "No Perp"}
+              </span>
+            </div>
+            <div className="text-sm font-black font-mono text-white">
+              {intelligence.bitget.oiUsd > 0 ? formatMillions(intelligence.bitget.oiUsd) : "Tracking"}
+            </div>
+            <div className="text-[10px] text-slate-400 truncate font-mono">
+              {intelligence.bitget.oiContracts > 0
+                ? `${intelligence.bitget.oiContracts.toLocaleString()} c`
+                : "Futures pool"}
+            </div>
+          </div>
+
+          {/* 5. Gate.io */}
+          <div className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1 col-span-2 sm:col-span-1">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50"></span>
+                Gate.io
+              </span>
+              <span className="text-[9px] font-mono text-slate-400 truncate max-w-[65px]">
+                {intelligence.gate.identifier ? "Linked" : "No Perp"}
+              </span>
+            </div>
+            <div className="text-sm font-black font-mono text-white">
+              {intelligence.gate.oiUsd > 0 ? formatMillions(intelligence.gate.oiUsd) : "Tracking"}
+            </div>
+            <div className="text-[10px] text-slate-400 truncate font-mono">
+              {intelligence.gate.oiContracts > 0
+                ? `${intelligence.gate.oiContracts.toLocaleString()} c`
+                : "USDT contract"}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Specialized Institutional Panels: Deribit Options & Upbit Korea Arbitrage */}
+      {(intelligence.options || intelligence.upbit) && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+          {/* Deribit Institutional Options Card */}
+          {intelligence.options && (
+            <div className="p-3.5 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Target className="w-4 h-4 text-purple-400" />
+                  <span className="text-xs font-bold text-white">
+                    Deribit Institutional Options ({intelligence.options.currency})
+                  </span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    intelligence.options.sentiment === "BULLISH_CALL_DOMINANT"
+                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                      : intelligence.options.sentiment === "BEARISH_PUT_HEDGING"
+                      ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                      : "bg-slate-800 text-slate-300 border-slate-700"
+                  }`}
+                >
+                  {intelligence.options.sentiment.replace(/_/g, " ")}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">
+                    Max Pain Strike (MM Magnet)
+                  </span>
+                  <div className="text-sm font-black font-mono text-purple-300 flex items-center gap-1.5 mt-0.5">
+                    ${intelligence.options.maxPainPrice.toLocaleString()}
+                    <span
+                      className={`text-[10px] font-bold ${
+                        intelligence.options.maxPainDistancePct >= 0
+                          ? "text-emerald-400"
+                          : "text-rose-400"
+                      }`}
+                    >
+                      ({intelligence.options.maxPainDistancePct >= 0 ? "+" : ""}
+                      {intelligence.options.maxPainDistancePct}%)
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                    Strike where MM options payout is minimized
+                  </span>
+                </div>
+
+                <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">
+                    Put / Call Volume Ratio
+                  </span>
+                  <div className="text-sm font-black font-mono text-white flex items-center gap-1.5 mt-0.5">
+                    {intelligence.options.putCallRatio}
+                    <span className="text-[10px] font-normal text-slate-400">
+                      ({intelligence.options.totalPutVolume.toLocaleString()} P /{" "}
+                      {intelligence.options.totalCallVolume.toLocaleString()} C)
+                    </span>
+                  </div>
+                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                    {intelligence.options.putCallRatio > 1.0
+                      ? "Institutions buying put hedges"
+                      : "Aggressive bullish call flow"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Upbit South Korea Kimchi Premium Card */}
+          {intelligence.upbit && (
+            <div className="p-3.5 rounded-xl bg-sky-950/20 border border-sky-500/30 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-sky-400" />
+                  <span className="text-xs font-bold text-white">
+                    Upbit Korea Spot &amp; Kimchi Premium Spread
+                  </span>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                    intelligence.upbit.signal === "EXTREME_RETAIL_FOMO"
+                      ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
+                      : intelligence.upbit.signal === "MODERATE_PREMIUM"
+                      ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                      : intelligence.upbit.signal === "PANIC_DISCOUNT"
+                      ? "bg-sky-500/20 text-sky-300 border-sky-500/40"
+                      : "bg-slate-800 text-slate-300 border-slate-700"
+                  }`}
+                >
+                  {intelligence.upbit.signal.replace(/_/g, " ")}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">
+                    Kimchi Premium Spread
+                  </span>
+                  <div
+                    className={`text-sm font-black font-mono flex items-center gap-1.5 mt-0.5 ${
+                      intelligence.upbit.kimchiPremiumPct >= 0 ? "text-amber-300" : "text-sky-300"
+                    }`}
+                  >
+                    {intelligence.upbit.kimchiPremiumPct >= 0 ? (
+                      <ArrowUpRight className="w-4 h-4 text-amber-400" />
+                    ) : (
+                      <ArrowDownRight className="w-4 h-4 text-sky-400" />
+                    )}
+                    {intelligence.upbit.kimchiPremiumPct >= 0 ? "+" : ""}
+                    {intelligence.upbit.kimchiPremiumPct}%
+                  </div>
+                  <span className="text-[9px] text-slate-400 block mt-0.5">
+                    {intelligence.upbit.kimchiPremiumPct >= 3.0
+                      ? "Korean retail FOMO (overheated)"
+                      : "Korean market aligned with global"}
+                  </span>
+                </div>
+
+                <div className="p-2 rounded-lg bg-slate-950/60 border border-slate-800">
+                  <span className="text-[10px] text-slate-400 uppercase font-semibold block">
+                    Upbit Live Price (USD Converted)
+                  </span>
+                  <div className="text-sm font-black font-mono text-white mt-0.5">
+                    ${intelligence.upbit.priceUsd.toLocaleString()}
+                  </div>
+                  <span className="text-[9px] text-slate-400 block mt-0.5 font-mono">
+                    ₩{intelligence.upbit.priceKrw.toLocaleString()} (Rate: ₩
+                    {intelligence.upbit.usdtKrwRate})
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Smart Money Flow Diagnostics */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
@@ -319,7 +514,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
         <div className="flex items-center gap-2">
           <Bot className="w-4 h-4 text-violet-400" />
           <span className="text-xs text-slate-300">
-            Want a deeper AI breakdown of what Market Makers are doing with this coin?
+            Need an instant AI strategic review of this token&apos;s institutional flow?
           </span>
         </div>
 
@@ -327,7 +522,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
           <button
             type="button"
             onClick={handleCopyPrompt}
-            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-slate-600 text-xs text-slate-300 flex items-center gap-1.5 transition-colors"
+            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 hover:border-slate-600 text-xs text-slate-300 flex items-center gap-1.5 transition-colors cursor-pointer"
             title="Copy snapshot prompt for AI"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -336,7 +531,7 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
 
           <Link
             href="/copilot"
-            className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm shadow-violet-500/20 transition-all"
+            className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm shadow-violet-500/20 transition-all cursor-pointer"
           >
             <Bot className="w-3.5 h-3.5" />
             <span>Open AI Copilot</span>

@@ -1,32 +1,61 @@
-export interface CrossExchangeOi {
-  binanceOiUsd: number;
-  binanceOiChange24hPct: number;
-  okxOiUsd: number;
-  okxOiContracts: number;
-  okxInstrumentId: string | null;
-  bybitOiUsd: number;
-  bybitOiContracts: number;
-  bybitSymbol: string | null;
+export interface ExchangeOiData {
+  name: string;
+  oiUsd: number;
+  oiContracts: number;
+  identifier: string | null;
+  change24hPct?: number;
+}
+
+export interface DeribitOptionsData {
+  available: boolean;
+  currency: string;
+  putCallRatio: number;
+  totalCallVolume: number;
+  totalPutVolume: number;
+  maxPainPrice: number;
+  maxPainDistancePct: number;
+  sentiment: "BULLISH_CALL_DOMINANT" | "BEARISH_PUT_HEDGING" | "BALANCED";
+}
+
+export interface UpbitArbitrageData {
+  available: boolean;
+  market: string;
+  priceKrw: number;
+  priceUsd: number;
+  usdtKrwRate: number;
+  kimchiPremiumPct: number;
+  signal: "EXTREME_RETAIL_FOMO" | "MODERATE_PREMIUM" | "NORMAL" | "PANIC_DISCOUNT";
+}
+
+export interface CrossExchangeIntelligence {
+  binance: ExchangeOiData;
+  okx: ExchangeOiData;
+  bybit: ExchangeOiData;
+  bitget: ExchangeOiData;
+  gate: ExchangeOiData;
   totalMonitoredOiUsd: number;
+  options: DeribitOptionsData | null;
+  upbit: UpbitArbitrageData | null;
 }
 
 export interface MarketMakerFlowResult {
   symbol: string;
   baseAsset: string;
   currentPrice: number;
-  exchanges: CrossExchangeOi;
+  intelligence: CrossExchangeIntelligence;
   marketMakerState:
     | "WHALE_DUMP_ALERT"
     | "INSTITUTIONAL_ACCUMULATION"
     | "SHORT_SQUEEZE_FUEL"
     | "LONG_LIQUIDATION_TRAP"
+    | "OPTIONS_GRAVITY_PULL"
     | "NEUTRAL_CONSOLIDATION";
   stateTitle: string;
   stateDescription: string;
   beginnerVerdict: {
     action: "BUY_LONG" | "SELL_SHORT" | "WAIT_STAY_OUT";
     actionHeadline: string;
-    actionBadgeColor: "emerald" | "rose" | "amber";
+    actionBadgeColor: "emerald" | "rose" | "amber" | "purple";
     plainEnglishWhy: string;
     goldenRule: string;
     riskTier: "LOW" | "MODERATE" | "HIGH" | "EXTREME";
@@ -39,17 +68,19 @@ export interface MarketMakerFlowResult {
     retailRatio: number;
     fundingSignal: string;
     orderBookImbalance: string;
+    kimchiSignal: string;
+    optionsSignal: string;
   };
   aiPromptDigest: string;
 }
 
-async function fetchWithTimeout(url: string, timeoutMs = 4000): Promise<any> {
+async function fetchWithTimeout(url: string, timeoutMs = 4500): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       signal: controller.signal,
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; TradingGoalTracker/1.0)" },
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; TradingGoalTracker/2.0)" },
       cache: "no-store",
     });
     if (!res.ok) return null;
@@ -94,52 +125,201 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
 
   const base = baseAsset.toUpperCase();
 
-  // 1. Query OKX Open Interest
-  let okxOiUsd = 0;
-  let okxOiContracts = 0;
-  let okxInstrumentId: string | null = null;
+  // Run all parallel queries across OKX, Bybit, Bitget, Gate.io, Upbit, and Deribit
+  const [okxData, bybitData, bitgetData, gateData, upbitData, deribitData] = await Promise.all([
+    // 1. OKX Open Interest
+    (async () => {
+      const candidates = [`${base}-USDT-SWAP`, `1000${base}-USDT-SWAP`, `${base}-USD-SWAP`];
+      for (const instId of candidates) {
+        const res = await fetchWithTimeout(
+          `https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId=${instId}`,
+          3500
+        );
+        if (res?.data?.[0]?.oi) {
+          const contracts = Number(res.data[0].oi || 0);
+          const ccy = Number(res.data[0].oiCcy || 0);
+          const usd = ccy > 0 ? ccy * currentPrice : contracts * currentPrice;
+          return { name: "OKX Swap", oiUsd: usd, oiContracts: contracts, identifier: instId };
+        }
+      }
+      return { name: "OKX Swap", oiUsd: 0, oiContracts: 0, identifier: null };
+    })(),
 
-  const okxCandidates = [`${base}-USDT-SWAP`, `1000${base}-USDT-SWAP`, `${base}-USD-SWAP`];
-  for (const instId of okxCandidates) {
-    const okxRes = await fetchWithTimeout(
-      `https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId=${instId}`,
-      3000
-    );
-    if (okxRes?.data?.[0]?.oi) {
-      okxInstrumentId = instId;
-      okxOiContracts = Number(okxRes.data[0].oi || 0);
-      const oiCcy = Number(okxRes.data[0].oiCcy || 0);
-      okxOiUsd = oiCcy > 0 ? oiCcy * currentPrice : okxOiContracts * currentPrice;
-      break;
-    }
-  }
+    // 2. Bybit Open Interest
+    (async () => {
+      const candidates = [`${base}USDT`, `1000${base}USDT`];
+      for (const sym of candidates) {
+        const res = await fetchWithTimeout(
+          `https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${sym}&intervalTime=5min&limit=1`,
+          3500
+        );
+        if (res?.result?.list?.[0]?.openInterest) {
+          const contracts = Number(res.result.list[0].openInterest || 0);
+          const usd = contracts * currentPrice;
+          return { name: "Bybit Linear", oiUsd: usd, oiContracts: contracts, identifier: sym };
+        }
+      }
+      return { name: "Bybit Linear", oiUsd: 0, oiContracts: 0, identifier: null };
+    })(),
 
-  // 2. Query Bybit Open Interest
-  let bybitOiUsd = 0;
-  let bybitOiContracts = 0;
-  let bybitSymbol: string | null = null;
+    // 3. Bitget Open Interest
+    (async () => {
+      const candidates = [`${base}USDT`, `1000${base}USDT`];
+      for (const sym of candidates) {
+        const res = await fetchWithTimeout(
+          `https://api.bitget.com/api/v2/mix/market/open-interest?productType=USDT-FUTURES&symbol=${sym}`,
+          3500
+        );
+        if (res?.data?.openInterestList?.[0]?.size) {
+          const contracts = Number(res.data.openInterestList[0].size || 0);
+          const usd = contracts * currentPrice;
+          return { name: "Bitget Futures", oiUsd: usd, oiContracts: contracts, identifier: sym };
+        }
+      }
+      return { name: "Bitget Futures", oiUsd: 0, oiContracts: 0, identifier: null };
+    })(),
 
-  const bybitCandidates = [`${base}USDT`, `1000${base}USDT`];
-  for (const sym of bybitCandidates) {
-    const bybitRes = await fetchWithTimeout(
-      `https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${sym}&intervalTime=5min&limit=1`,
-      3000
-    );
-    if (bybitRes?.result?.list?.[0]?.openInterest) {
-      bybitSymbol = sym;
-      bybitOiContracts = Number(bybitRes.result.list[0].openInterest || 0);
-      bybitOiUsd = bybitOiContracts * currentPrice;
-      break;
-    }
-  }
+    // 4. Gate.io Open Interest
+    (async () => {
+      const candidates = [`${base}_USDT`, `1000_${base}_USDT`];
+      for (const c of candidates) {
+        const res = await fetchWithTimeout(
+          `https://api.gateio.ws/api/v4/futures/usdt/contracts/${c}`,
+          3500
+        );
+        if (res?.position_size) {
+          const contracts = Number(res.position_size || 0);
+          const usd = contracts * currentPrice;
+          return { name: "Gate.io Futures", oiUsd: usd, oiContracts: contracts, identifier: c };
+        }
+      }
+      return { name: "Gate.io Futures", oiUsd: 0, oiContracts: 0, identifier: null };
+    })(),
 
-  const totalMonitoredOiUsd = binanceOiUsd + okxOiUsd + bybitOiUsd;
+    // 5. Upbit Arbitrage (Kimchi Premium)
+    (async () => {
+      try {
+        const [usdtRes, coinRes] = await Promise.all([
+          fetchWithTimeout("https://api.upbit.com/v1/ticker?markets=KRW-USDT", 3000),
+          fetchWithTimeout(`https://api.upbit.com/v1/ticker?markets=KRW-${base}`, 3000),
+        ]);
+        if (usdtRes?.[0]?.trade_price && coinRes?.[0]?.trade_price) {
+          const usdtRate = Number(usdtRes[0].trade_price);
+          const coinKrw = Number(coinRes[0].trade_price);
+          const upbitUsd = coinKrw / usdtRate;
+          const premiumPct = ((upbitUsd - currentPrice) / currentPrice) * 100;
+          let signal: UpbitArbitrageData["signal"] = "NORMAL";
+          if (premiumPct >= 3.5) signal = "EXTREME_RETAIL_FOMO";
+          else if (premiumPct >= 1.2) signal = "MODERATE_PREMIUM";
+          else if (premiumPct <= -2.0) signal = "PANIC_DISCOUNT";
 
-  // 3. Market Maker Behavior Diagnostics
+          return {
+            available: true,
+            market: `KRW-${base}`,
+            priceKrw: coinKrw,
+            priceUsd: Number(upbitUsd.toFixed(4)),
+            usdtKrwRate: usdtRate,
+            kimchiPremiumPct: Number(premiumPct.toFixed(2)),
+            signal,
+          };
+        }
+      } catch {}
+      return null;
+    })(),
+
+    // 6. Deribit Institutional Options (BTC, ETH, SOL)
+    (async () => {
+      if (!["BTC", "ETH", "SOL"].includes(base)) return null;
+      try {
+        const res = await fetchWithTimeout(
+          `https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=${base}&kind=option`,
+          4000
+        );
+        const options = res?.result;
+        if (Array.isArray(options) && options.length > 0) {
+          let callVol = 0;
+          let putVol = 0;
+          const strikes = new Map<number, { callsOi: number; putsOi: number }>();
+
+          for (const o of options) {
+            const parts = String(o.instrument_name || "").split("-");
+            if (parts.length >= 4) {
+              const strike = Number(parts[2]);
+              const isCall = parts[3] === "C";
+              const oi = Number(o.open_interest || 0);
+              const vol = Number(o.volume || 0);
+
+              if (isCall) callVol += vol;
+              else putVol += vol;
+
+              if (!isNaN(strike)) {
+                if (!strikes.has(strike)) strikes.set(strike, { callsOi: 0, putsOi: 0 });
+                const cur = strikes.get(strike)!;
+                if (isCall) cur.callsOi += oi;
+                else cur.putsOi += oi;
+              }
+            }
+          }
+
+          // Max Pain Strike Calculation
+          const strikeKeys = Array.from(strikes.keys()).sort((a, b) => a - b);
+          let minLoss = Infinity;
+          let maxPainPrice = currentPrice;
+
+          for (const s of strikeKeys) {
+            let totalLoss = 0;
+            for (const [otherStrike, data] of strikes.entries()) {
+              if (s > otherStrike) totalLoss += (s - otherStrike) * data.callsOi;
+              else if (s < otherStrike) totalLoss += (otherStrike - s) * data.putsOi;
+            }
+            if (totalLoss < minLoss) {
+              minLoss = totalLoss;
+              maxPainPrice = s;
+            }
+          }
+
+          const putCallRatio = callVol > 0 ? Number((putVol / callVol).toFixed(2)) : 1.0;
+          const maxPainDistPct = Number((((maxPainPrice - currentPrice) / currentPrice) * 100).toFixed(2));
+          let sentiment: DeribitOptionsData["sentiment"] = "BALANCED";
+          if (putCallRatio >= 1.15) sentiment = "BEARISH_PUT_HEDGING";
+          else if (putCallRatio <= 0.75) sentiment = "BULLISH_CALL_DOMINANT";
+
+          return {
+            available: true,
+            currency: base,
+            putCallRatio,
+            totalCallVolume: Number(callVol.toFixed(1)),
+            totalPutVolume: Number(putVol.toFixed(1)),
+            maxPainPrice,
+            maxPainDistancePct: maxPainDistPct,
+            sentiment,
+          };
+        }
+      } catch {}
+      return null;
+    })(),
+  ]);
+
+  const binanceData: ExchangeOiData = {
+    name: "Binance Futures",
+    oiUsd: binanceOiUsd,
+    oiContracts: currentPrice > 0 ? binanceOiUsd / currentPrice : 0,
+    identifier: symbol,
+    change24hPct: binanceOiChange24hPct,
+  };
+
+  const totalMonitoredOiUsd =
+    binanceData.oiUsd +
+    okxData.oiUsd +
+    bybitData.oiUsd +
+    bitgetData.oiUsd +
+    gateData.oiUsd;
+
+  // 7. Advanced Market Maker State Synthesis
   let mmState: MarketMakerFlowResult["marketMakerState"] = "NEUTRAL_CONSOLIDATION";
   let stateTitle = "Market Makers in Balanced Inventory";
   let stateDescription =
-    "Neither aggressive buying nor dumping is detected. Leverage is evenly distributed across major exchanges.";
+    "Neither aggressive dumping nor runaway accumulation is detected across major exchanges.";
 
   let action: MarketMakerFlowResult["beginnerVerdict"]["action"] = "WAIT_STAY_OUT";
   let actionHeadline = "WAIT — NO IMMEDIATE EDGE";
@@ -153,10 +333,11 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
   const bidRatio = bidDepthUsd / totalDepth;
   const askRatio = askDepthUsd / totalDepth;
 
-  // Pattern A: WHALE DUMP ALERT (Insiders selling / MM offloading into retail)
+  // Pattern 1: DUMP / DISTRIBUTION WARNING
   if (
     (retailLongShortRatio > 1.35 && whaleLongShortRatio < 0.95) ||
     (binanceOiChange24hPct <= -6 && askRatio >= 0.62) ||
+    (upbitData?.signal === "EXTREME_RETAIL_FOMO" && whaleLongShortRatio < 1.0) ||
     (biggestAskWall && biggestAskWall.usd > 1_500_000 && biggestAskWall.usd > (biggestBidWall?.usd || 0) * 2.5)
   ) {
     mmState = "WHALE_DUMP_ALERT";
@@ -164,14 +345,14 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
     stateDescription =
       "Market makers are offloading inventory into unsuspecting retail traders. Huge sell walls are capping upside while leverage is unwinding.";
     action = "SELL_SHORT";
-    actionHeadline = "LOOK FOR SHORT (DO NOT LONG!)";
+    actionHeadline = "LOOK FOR SHORT (DO NOT BUY!)";
     actionBadgeColor = "rose";
     plainEnglishWhy =
       "Market makers and institutional whales are actively selling tokens while everyday retail traders are trapped trying to buy the dip. When whales sell into trapped buyers, prices usually drop sharply.";
     goldenRule = "Do NOT buy the dip when smart money is distributing. Look for short entries on minor relief bounces.";
     riskTier = "HIGH";
   }
-  // Pattern B: INSTITUTIONAL ACCUMULATION (Smart money quietly loading spot/futures)
+  // Pattern 2: INSTITUTIONAL ACCUMULATION
   else if (
     (whaleLongShortRatio >= 1.3 && retailLongShortRatio <= 0.85) ||
     (binanceOiChange24hPct >= 4 && takerBuySellRatio >= 1.15 && bidRatio >= 0.58)
@@ -179,7 +360,7 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
     mmState = "INSTITUTIONAL_ACCUMULATION";
     stateTitle = "🟢 Smart Money & Market Maker Accumulation";
     stateDescription =
-      "Institutional whales are quietly building long positions across Binance and OKX while retail traders are selling or staying cautious.";
+      "Institutional whales are quietly building long positions across Binance, OKX, and Bybit while retail traders are selling or staying cautious.";
     action = "BUY_LONG";
     actionHeadline = "BUY / LONG SETUP (FOLLOW THE WHALES)";
     actionBadgeColor = "emerald";
@@ -188,7 +369,7 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
     goldenRule = "Buy near the institutional bid walls and ride the momentum upward.";
     riskTier = "LOW";
   }
-  // Pattern C: SHORT SQUEEZE FUEL (Trapped shorts paying high fees)
+  // Pattern 3: SHORT SQUEEZE FUEL
   else if (fundingRatePct <= -0.015 || (takerBuySellRatio >= 1.25 && binanceOiChange24hPct >= 5)) {
     mmState = "SHORT_SQUEEZE_FUEL";
     stateTitle = "⚡ Short-Squeeze Springboard Primed";
@@ -202,19 +383,17 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
     goldenRule = "Enter longs with a tight stop-loss and take profit into the sudden squeeze spike.";
     riskTier = "MODERATE";
   }
-  // Pattern D: LONG LIQUIDATION TRAP (Overcrowded longs about to be flushed)
-  else if (fundingRatePct >= 0.04 && retailLongShortRatio >= 1.3) {
-    mmState = "LONG_LIQUIDATION_TRAP";
-    stateTitle = "⚠️ Overleveraged Long Trap (Liquidation Risk)";
-    stateDescription =
-      "Retail traders are dangerously overleveraged in longs and paying heavy fees. Market makers frequently hunt this liquidity with a fast stop-run downward.";
-    action = "WAIT_STAY_OUT";
-    actionHeadline = "STAND ASIDE — FLUSH EXPECTED";
-    actionBadgeColor = "amber";
-    plainEnglishWhy =
-      "Everyone is already long and paying huge fees. There are no fresh buyers left at current prices, making the market vulnerable to a sudden 5%–10% flash dump to wipe out stop-losses.";
-    goldenRule = "Never FOMO into green candles when funding rates are flashing extreme positive.";
-    riskTier = "EXTREME";
+  // Pattern 4: DERIBIT OPTIONS GRAVITY (If price is strongly deflected from Max Pain)
+  else if (deribitData && Math.abs(deribitData.maxPainDistancePct) >= 5.0) {
+    mmState = "OPTIONS_GRAVITY_PULL";
+    stateTitle = `🎯 Institutional Options Max Pain Pull ($${deribitData.maxPainPrice.toLocaleString()})`;
+    stateDescription = `Deribit option sellers have maximum incentive to pull market price toward $${deribitData.maxPainPrice.toLocaleString()} (${deribitData.maxPainDistancePct >= 0 ? "+" : ""}${deribitData.maxPainDistancePct}% away).`;
+    action = deribitData.maxPainPrice > currentPrice ? "BUY_LONG" : "SELL_SHORT";
+    actionHeadline = deribitData.maxPainPrice > currentPrice ? "LEAN LONG (MAX PAIN PULL)" : "LEAN SHORT (MAX PAIN PULL)";
+    actionBadgeColor = "purple";
+    plainEnglishWhy = `Institutional option market makers on Deribit make the highest profit if the price finishes close to the Max Pain Strike ($${deribitData.maxPainPrice.toLocaleString()}). Expect gravitational pull toward this strike.`;
+    goldenRule = `Trade toward the Max Pain magnet level ($${deribitData.maxPainPrice.toLocaleString()}).`;
+    riskTier = "LOW";
   }
 
   const suggestedEntryRange =
@@ -231,29 +410,34 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
       ? `$${(currentPrice * 1.022).toFixed(4)} (+2.2%)`
       : "N/A";
 
-  const aiPromptDigest = `Analyze live Market Maker & Cross-Exchange flow for ${symbol}:
+  const aiPromptDigest = `Comprehensive Institutional Market Maker Intelligence for ${symbol}:
 - Current Price: $${currentPrice}
-- Total Monitored Leverage: $${(totalMonitoredOiUsd / 1e6).toFixed(1)}M across Binance ($${(binanceOiUsd / 1e6).toFixed(1)}M), OKX ($${(okxOiUsd / 1e6).toFixed(1)}M), Bybit ($${(bybitOiUsd / 1e6).toFixed(1)}M)
+- Global Monitored Leverage: $${(totalMonitoredOiUsd / 1e6).toFixed(1)}M across 5 Tier-1 Exchanges:
+  * Binance: $${(binanceData.oiUsd / 1e6).toFixed(1)}M (${binanceData.change24hPct >= 0 ? "+" : ""}${binanceData.change24hPct}%)
+  * OKX: $${(okxData.oiUsd / 1e6).toFixed(1)}M
+  * Bybit: $${(bybitData.oiUsd / 1e6).toFixed(1)}M
+  * Bitget: $${(bitgetData.oiUsd / 1e6).toFixed(1)}M
+  * Gate.io: $${(gateData.oiUsd / 1e6).toFixed(1)}M
+${deribitData ? `- Deribit Options: Put/Call Ratio ${deribitData.putCallRatio}, Max Pain Strike $${deribitData.maxPainPrice} (${deribitData.maxPainDistancePct >= 0 ? "+" : ""}${deribitData.maxPainDistancePct}% from current)` : ""}
+${upbitData ? `- Upbit Kimchi Premium: ${upbitData.kimchiPremiumPct}% ($${upbitData.priceUsd} vs Binance $${currentPrice})` : ""}
 - Market Maker State: ${mmState} (${stateTitle})
 - Whale vs Retail: Top Whales are ${whaleLongShortRatio}x Long, Global Retail is ${retailLongShortRatio}x Long
-- Funding Rate: ${fundingRatePct.toFixed(4)}% (Taker Buy/Sell: ${takerBuySellRatio})
-- Order Book Depth: Bids $${(bidDepthUsd / 1e3).toFixed(0)}k vs Asks $${(askDepthUsd / 1e3).toFixed(0)}k
+- Order Book Walls: Bids $${(bidDepthUsd / 1e3).toFixed(0)}k vs Asks $${(askDepthUsd / 1e3).toFixed(0)}k
 - What is your strategic recommendation for this token?`;
 
   return {
     symbol,
     baseAsset,
     currentPrice,
-    exchanges: {
-      binanceOiUsd: Number(binanceOiUsd.toFixed(0)),
-      binanceOiChange24hPct: Number(binanceOiChange24hPct.toFixed(2)),
-      okxOiUsd: Number(okxOiUsd.toFixed(0)),
-      okxOiContracts: Number(okxOiContracts.toFixed(0)),
-      okxInstrumentId,
-      bybitOiUsd: Number(bybitOiUsd.toFixed(0)),
-      bybitOiContracts: Number(bybitOiContracts.toFixed(0)),
-      bybitSymbol,
+    intelligence: {
+      binance: binanceData,
+      okx: okxData,
+      bybit: bybitData,
+      bitget: bitgetData,
+      gate: gateData,
       totalMonitoredOiUsd: Number(totalMonitoredOiUsd.toFixed(0)),
+      options: deribitData,
+      upbit: upbitData,
     },
     marketMakerState: mmState,
     stateTitle,
@@ -285,6 +469,8 @@ export async function fetchCrossExchangeMarketMakerFlow(params: {
           : askRatio >= 0.58
           ? "Heavy Overhead Resistance"
           : "Balanced Liquidity",
+      kimchiSignal: upbitData ? `${upbitData.kimchiPremiumPct}% (${upbitData.signal.replace(/_/g, " ")})` : "N/A",
+      optionsSignal: deribitData ? `Max Pain $${deribitData.maxPainPrice} (P/C ${deribitData.putCallRatio})` : "N/A",
     },
     aiPromptDigest,
   };
