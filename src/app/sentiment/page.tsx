@@ -11,6 +11,7 @@ import { PairIcon } from "@/components/ui/PairIcon";
 import { SupportResistanceMatrix } from "@/components/sentiment/SupportResistanceMatrix";
 import { TradeGptDebateSection } from "@/components/sentiment/TradeGptDebateSection";
 import { MarketMakerSentinel } from "@/components/sentiment/MarketMakerSentinel";
+import { WhaleTransferRadar } from "@/components/sentiment/WhaleTransferRadar";
 import { BeginnerExecutiveSummary } from "@/components/sentiment/BeginnerExecutiveSummary";
 import {
   evaluateMarketSentiment,
@@ -451,7 +452,13 @@ export default function SentimentPage() {
             currentPrice={market?.lastPrice || 0}
           />
 
-          {/* 2. Automated Support & Resistance Confluence Ladder */}
+          {/* 2. Live Whale Inflow & Market Maker Large Transfer Radar */}
+          <WhaleTransferRadar
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+          />
+
+          {/* 3. Automated Support & Resistance Confluence Ladder */}
           <SupportResistanceMatrix
             currentPrice={market?.lastPrice || 0}
             symbol={activeSymbol}
