@@ -12,6 +12,7 @@ import { SupportResistanceMatrix } from "@/components/sentiment/SupportResistanc
 import { TradeGptDebateSection } from "@/components/sentiment/TradeGptDebateSection";
 import { MarketMakerSentinel } from "@/components/sentiment/MarketMakerSentinel";
 import { WhaleTransferRadar } from "@/components/sentiment/WhaleTransferRadar";
+import { InstitutionalProSuite } from "@/components/sentiment/InstitutionalProSuite";
 import { BeginnerExecutiveSummary } from "@/components/sentiment/BeginnerExecutiveSummary";
 import {
   evaluateMarketSentiment,
@@ -458,7 +459,13 @@ export default function SentimentPage() {
             currentPrice={market?.lastPrice || 0}
           />
 
-          {/* 3. Automated Support & Resistance Confluence Ladder */}
+          {/* 3. Institutional Pro Suite (CVD, FVG, SMC, RSI, OKX, APY, ROI) */}
+          <InstitutionalProSuite
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+          />
+
+          {/* 4. Automated Support & Resistance Confluence Ladder */}
           <SupportResistanceMatrix
             currentPrice={market?.lastPrice || 0}
             symbol={activeSymbol}
