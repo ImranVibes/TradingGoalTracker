@@ -6,6 +6,7 @@ import {
   getDailyDosDontsLogs,
   upsertDailyDosDontsLog,
   deleteDailyDosDontsLog,
+  getTrades,
 } from "@/lib/db";
 import { z } from "zod";
 
@@ -16,6 +17,10 @@ const BehaviorItemSchema = z.object({
   kind: z.enum(["DO", "DONT"]),
   count: z.coerce.number().int().min(1).max(99).default(1),
   category: z.string().trim().max(48).optional().default("General"),
+  trade_id: z.string().trim().max(64).optional(),
+  trade_symbol: z.string().trim().max(32).optional(),
+  trade_direction: z.string().trim().max(16).optional(),
+  trade_pnl: z.coerce.number().optional(),
 });
 
 const SaveDaySchema = z.object({
@@ -38,15 +43,17 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const account_id = searchParams.get("account_id") || undefined;
 
-    const [templates, logs] = await Promise.all([
+    const [templates, logs, trades] = await Promise.all([
       getDosDontsTemplates(),
       getDailyDosDontsLogs(account_id),
+      getTrades(account_id && account_id !== "ALL" ? { account_id } : undefined),
     ]);
 
     return NextResponse.json({
       success: true,
       templates,
       logs,
+      trades,
     });
   } catch (error: any) {
     console.error("[API dos-donts GET] Error:", error);

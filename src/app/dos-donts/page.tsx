@@ -8,7 +8,7 @@ import { CashflowFormModal } from "@/components/cashflow/CashflowFormModal";
 import { GoalFormModal } from "@/components/goals/GoalFormModal";
 import { WeeklyReviewButton } from "@/components/analytics/WeeklyReviewButton";
 import { useAccounts } from "@/components/providers/AccountProvider";
-import { DosDontsTemplate, DailyDosDontsLog, DailyBehaviorItem } from "@/lib/types";
+import { DosDontsTemplate, DailyDosDontsLog, DailyBehaviorItem, Trade } from "@/lib/types";
 import { toDateInputValue } from "@/lib/utils";
 import {
   ClipboardCheck,
@@ -28,6 +28,14 @@ import {
   Sparkles,
   BarChart2,
   X,
+  Target,
+  ArrowUpRight,
+  ArrowDownRight,
+  TrendingUp,
+  TrendingDown,
+  ShieldCheck,
+  ShieldAlert,
+  AlertTriangle,
 } from "lucide-react";
 
 type RollupScope = "DAY" | "WEEK" | "MONTH" | "ALL";
@@ -103,7 +111,14 @@ export default function DosDontsPage() {
 
   const [templates, setTemplates] = useState<DosDontsTemplate[]>([]);
   const [logs, setLogs] = useState<DailyDosDontsLog[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Trade Linking State
+  const [selectedTradeId, setSelectedTradeId] = useState<string | null>(null);
+  const [tradeMatrixScope, setTradeMatrixScope] = useState<"SELECTED_DAY" | "WEEK" | "MONTH">("SELECTED_DAY");
+  const [tradeMatrixFilter, setTradeMatrixFilter] = useState<"ALL" | "CLEAN" | "MISTAKES">("ALL");
+  const [quickTagTradeId, setQuickTagTradeId] = useState<string | null>(null);
 
   // Selected Day Draft State
   const [dayItems, setDayItems] = useState<DailyBehaviorItem[]>([]);
@@ -140,6 +155,9 @@ export default function DosDontsPage() {
       if (data.success) {
         setTemplates(data.templates || []);
         setLogs(data.logs || []);
+        if (Array.isArray(data.trades)) {
+          setTrades(data.trades);
+        }
       }
     } catch (err) {
       console.error("[DosDonts] Fetch failed:", err);
@@ -166,7 +184,10 @@ export default function DosDontsPage() {
       }
       for (const item of log.items || []) {
         const existing = map[d].items.find(
-          (x) => x.kind === item.kind && x.label.toLowerCase() === item.label.toLowerCase()
+          (x) =>
+            x.kind === item.kind &&
+            x.label.toLowerCase() === item.label.toLowerCase() &&
+            (item.trade_id ? x.trade_id === item.trade_id : !x.trade_id)
         );
         if (existing) {
           existing.count += Number(item.count || 1);
@@ -243,16 +264,36 @@ export default function DosDontsPage() {
     [targetAccountId]
   );
 
+  // Trade linkages
+  const selectedDayTrades = useMemo(() => {
+    return trades.filter((t) => {
+      const d = (t.trade_date || "").slice(0, 10);
+      return d === selectedDate;
+    });
+  }, [trades, selectedDate]);
+
+  const activeTrade = useMemo(() => {
+    if (!selectedTradeId) return null;
+    return trades.find((t) => t.id === selectedTradeId) || null;
+  }, [trades, selectedTradeId]);
+
   // Add/increment/decrement a behavior point on the selected day
   const updateItemCount = (
     kind: "DO" | "DONT",
     label: string,
     delta: number,
-    category = "General"
+    category = "General",
+    overrideTradeId?: string | null
   ) => {
     const next = [...dayItems];
+    const targetTradeId = overrideTradeId !== undefined ? overrideTradeId : selectedTradeId;
+    const linkedTrade = targetTradeId ? trades.find((t) => t.id === targetTradeId) : null;
+
     const idx = next.findIndex(
-      (i) => i.kind === kind && i.label.toLowerCase() === label.toLowerCase()
+      (i) =>
+        i.kind === kind &&
+        i.label.toLowerCase() === label.toLowerCase() &&
+        (targetTradeId ? i.trade_id === targetTradeId : !i.trade_id)
     );
     if (idx >= 0) {
       const updatedCount = next[idx].count + delta;
@@ -262,7 +303,16 @@ export default function DosDontsPage() {
         next[idx] = { ...next[idx], count: Math.min(99, updatedCount) };
       }
     } else if (delta > 0) {
-      next.push({ label: label.trim(), kind, count: delta, category });
+      next.push({
+        label: label.trim(),
+        kind,
+        count: delta,
+        category,
+        trade_id: linkedTrade ? linkedTrade.id : undefined,
+        trade_symbol: linkedTrade ? linkedTrade.symbol : undefined,
+        trade_direction: linkedTrade ? linkedTrade.direction || "LONG" : undefined,
+        trade_pnl: linkedTrade ? linkedTrade.pnl : undefined,
+      });
     }
     setDayItems(next);
     persistDay(next, reflection, selectedDate);
@@ -318,9 +368,26 @@ export default function DosDontsPage() {
   const doTemplates = useMemo(() => templates.filter((t) => t.kind === "DO"), [templates]);
   const dontTemplates = useMemo(() => templates.filter((t) => t.kind === "DONT"), [templates]);
 
-  const getSelectedCount = (kind: "DO" | "DONT", label: string): number => {
+  const getSelectedCount = (
+    kind: "DO" | "DONT",
+    label: string,
+    targetTradeId?: string | null
+  ): number => {
+    const checkId = targetTradeId !== undefined ? targetTradeId : selectedTradeId;
+    if (checkId) {
+      const found = dayItems.find(
+        (i) =>
+          i.kind === kind &&
+          i.label.toLowerCase() === label.toLowerCase() &&
+          i.trade_id === checkId
+      );
+      return found ? found.count : 0;
+    }
     const found = dayItems.find(
-      (i) => i.kind === kind && i.label.toLowerCase() === label.toLowerCase()
+      (i) =>
+        i.kind === kind &&
+        i.label.toLowerCase() === label.toLowerCase() &&
+        !i.trade_id
     );
     return found ? found.count : 0;
   };
@@ -339,6 +406,87 @@ export default function DosDontsPage() {
 
   // Week range around selectedDate
   const activeWeek = useMemo(() => getWeekRangeForDate(selectedDate), [selectedDate]);
+
+  // Trades based on the Trade Matrix Scope (Day, Week, Month)
+  const scopedMatrixTrades = useMemo(() => {
+    return trades.filter((t) => {
+      const d = (t.trade_date || "").slice(0, 10);
+      if (tradeMatrixScope === "SELECTED_DAY") return d === selectedDate;
+      if (tradeMatrixScope === "WEEK") return d >= activeWeek.start && d <= activeWeek.end;
+      if (tradeMatrixScope === "MONTH") return d.startsWith(monthPrefix);
+      return true;
+    });
+  }, [trades, tradeMatrixScope, selectedDate, activeWeek, monthPrefix]);
+
+  // Trade-by-trade analytics helper for scopedMatrixTrades
+  const tradeBehaviorStats = useMemo(() => {
+    let cleanWins = 0;
+    let cleanTotal = 0;
+    let cleanPnl = 0;
+
+    let mistakeWins = 0;
+    let mistakeTotal = 0;
+    let mistakePnl = 0;
+
+    // Collect all items across logs to match trades
+    const allItems: DailyBehaviorItem[] = [];
+    for (const log of logs) {
+      for (const item of log.items || []) {
+        allItems.push(item);
+      }
+    }
+
+    const tradeBreakdown = scopedMatrixTrades.map((t) => {
+      const tItems = [
+        ...dayItems.filter((i) => i.trade_id === t.id),
+        ...allItems.filter(
+          (i) =>
+            i.trade_id === t.id &&
+            !dayItems.some((di) => di.trade_id === t.id && di.label.toLowerCase() === i.label.toLowerCase())
+        ),
+      ];
+      const dos = tItems.filter((i) => i.kind === "DO");
+      const donts = tItems.filter((i) => i.kind === "DONT");
+      const dosCount = dos.reduce((s, i) => s + i.count, 0);
+      const dontsCount = donts.reduce((s, i) => s + i.count, 0);
+      const grade = computeDayGrade(dosCount, dontsCount);
+      const isWon = t.status === "WON" || t.pnl > 0;
+      const isMistakeTainted = dontsCount > 0;
+
+      if (isMistakeTainted) {
+        mistakeTotal++;
+        if (isWon) mistakeWins++;
+        mistakePnl += Number(t.pnl || 0);
+      } else {
+        cleanTotal++;
+        if (isWon) cleanWins++;
+        cleanPnl += Number(t.pnl || 0);
+      }
+
+      return {
+        trade: t,
+        dos,
+        donts,
+        dosCount,
+        dontsCount,
+        grade,
+        isMistakeTainted,
+      };
+    });
+
+    const cleanWinRate = cleanTotal > 0 ? Math.round((cleanWins / cleanTotal) * 100) : 0;
+    const mistakeWinRate = mistakeTotal > 0 ? Math.round((mistakeWins / mistakeTotal) * 100) : 0;
+
+    return {
+      tradeBreakdown,
+      cleanTotal,
+      cleanWinRate,
+      cleanPnl,
+      mistakeTotal,
+      mistakeWinRate,
+      mistakePnl,
+    };
+  }, [scopedMatrixTrades, dayItems, logs]);
 
   // Rollup Stats (Day / Week / Month / All Time)
   const rollup = useMemo(() => {
@@ -644,6 +792,93 @@ export default function DosDontsPage() {
                   </div>
                 </div>
 
+                {/* Target Trade Scope Selector (Day-Wide vs. Specific Trade) */}
+                <div className="rounded-2xl bg-slate-950/70 border border-slate-800 p-3.5 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 font-mono">
+                      <Target className="w-3.5 h-3.5 text-sky-400" />
+                      Assign Behavior To:
+                    </span>
+                    {selectedTradeId && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTradeId(null)}
+                        className="text-[10px] text-sky-400 hover:text-sky-300 font-mono font-bold flex items-center gap-1"
+                      >
+                        <X className="w-3 h-3" /> Reset to Day-Wide
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTradeId(null)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                        selectedTradeId === null
+                          ? "bg-sky-500/20 text-sky-300 border-sky-500/50 shadow-sm"
+                          : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white"
+                      }`}
+                    >
+                      <CalendarIcon className="w-3.5 h-3.5" />
+                      <span>Day-Wide (General)</span>
+                    </button>
+
+                    {selectedDayTrades.map((t) => {
+                      const isWon = t.status === "WON" || t.pnl > 0;
+                      const isLost = t.status === "LOST" || t.pnl < 0;
+                      const isSelected = selectedTradeId === t.id;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => setSelectedTradeId(isSelected ? null : t.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                            isSelected
+                              ? "bg-amber-500/25 text-amber-300 border-amber-500/60 shadow-md ring-1 ring-amber-500/40"
+                              : isWon
+                              ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:border-emerald-500/60"
+                              : isLost
+                              ? "bg-rose-500/10 text-rose-300 border-rose-500/30 hover:border-rose-500/60"
+                              : "bg-slate-900 text-slate-300 border-slate-800 hover:text-white"
+                          }`}
+                        >
+                          <span>{t.symbol}</span>
+                          <span className="text-[10px] opacity-75">({t.direction || "TRADE"})</span>
+                          <span className={`font-black ${isWon ? "text-emerald-400" : isLost ? "text-rose-400" : "text-slate-400"}`}>
+                            {t.pnl >= 0 ? `+$${Number(t.pnl).toFixed(0)}` : `-$${Math.abs(Number(t.pnl)).toFixed(0)}`}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                    {selectedDayTrades.length === 0 && (
+                      <span className="text-xs text-slate-500 italic py-1">
+                        (No trades logged on {selectedDate} — points will apply day-wide)
+                      </span>
+                    )}
+                  </div>
+
+                  {activeTrade ? (
+                    <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-between gap-2 text-xs text-amber-200">
+                      <div className="flex items-center gap-2">
+                        <Target className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                        <span>
+                          Tagging points to: <strong>{activeTrade.symbol}</strong> ({activeTrade.direction} • {activeTrade.pnl >= 0 ? `+$${Number(activeTrade.pnl).toFixed(0)}` : `-$${Math.abs(Number(activeTrade.pnl)).toFixed(0)}`}).
+                        </span>
+                      </div>
+                      <span className="text-[10px] font-mono text-amber-400 uppercase font-bold bg-amber-500/20 px-2 py-0.5 rounded">
+                        Trade Active
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-[11px] text-slate-400 flex items-center gap-1.5 pl-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                      Points clicked below will log to overall daily discipline.
+                    </div>
+                  )}
+                </div>
+
                 {/* Today's Active Logged Points (with 1x / 2x / 3x counters) */}
                 {(selectedDayDos.length > 0 || selectedDayDonts.length > 0) && (
                   <div className="rounded-xl bg-slate-950/60 border border-slate-800 p-3.5 space-y-3">
@@ -658,15 +893,30 @@ export default function DosDontsPage() {
                     <div className="flex flex-wrap gap-2">
                       {selectedDayDos.map((item) => (
                         <div
-                          key={`active_do_${item.label}`}
+                          key={`active_do_${item.label}_${item.trade_id || "day"}`}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-xs text-emerald-200"
                         >
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
                           <span className="font-semibold">{item.label}</span>
+                          {item.trade_symbol ? (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border ${
+                                (item.trade_pnl ?? 0) >= 0
+                                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                                  : "bg-rose-500/20 text-rose-300 border-rose-500/30"
+                              }`}
+                            >
+                              {item.trade_symbol} {item.trade_pnl !== undefined ? ((item.trade_pnl >= 0 ? "+" : "") + `$${Number(item.trade_pnl).toFixed(0)}`) : ""}
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-900 border border-slate-800">
+                              Day-Wide
+                            </span>
+                          )}
                           <div className="flex items-center gap-1 ml-1 pl-1.5 border-l border-emerald-500/30 font-mono">
                             <button
                               type="button"
-                              onClick={() => updateItemCount("DO", item.label, -1, item.category)}
+                              onClick={() => updateItemCount("DO", item.label, -1, item.category, item.trade_id)}
                               className="p-0.5 rounded hover:bg-emerald-500/30 text-emerald-300"
                               title="Decrease count (removes at 0)"
                             >
@@ -677,7 +927,7 @@ export default function DosDontsPage() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => updateItemCount("DO", item.label, 1, item.category)}
+                              onClick={() => updateItemCount("DO", item.label, 1, item.category, item.trade_id)}
                               className="p-0.5 rounded hover:bg-emerald-500/30 text-emerald-300"
                               title="Increment count (2x, 3x...)"
                             >
@@ -689,15 +939,30 @@ export default function DosDontsPage() {
 
                       {selectedDayDonts.map((item) => (
                         <div
-                          key={`active_dont_${item.label}`}
+                          key={`active_dont_${item.label}_${item.trade_id || "day"}`}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200"
                         >
                           <XCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
                           <span className="font-semibold">{item.label}</span>
+                          {item.trade_symbol ? (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border ${
+                                (item.trade_pnl ?? 0) >= 0
+                                  ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                                  : "bg-rose-500/20 text-rose-300 border-rose-500/30"
+                              }`}
+                            >
+                              {item.trade_symbol} {item.trade_pnl !== undefined ? ((item.trade_pnl >= 0 ? "+" : "") + `$${Number(item.trade_pnl).toFixed(0)}`) : ""}
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono text-slate-400 bg-slate-900 border border-slate-800">
+                              Day-Wide
+                            </span>
+                          )}
                           <div className="flex items-center gap-1 ml-1 pl-1.5 border-l border-rose-500/30 font-mono">
                             <button
                               type="button"
-                              onClick={() => updateItemCount("DONT", item.label, -1, item.category)}
+                              onClick={() => updateItemCount("DONT", item.label, -1, item.category, item.trade_id)}
                               className="p-0.5 rounded hover:bg-rose-500/30 text-rose-300"
                               title="Decrease count (removes at 0)"
                             >
@@ -708,7 +973,7 @@ export default function DosDontsPage() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => updateItemCount("DONT", item.label, 1, item.category)}
+                              onClick={() => updateItemCount("DONT", item.label, 1, item.category, item.trade_id)}
                               className="p-0.5 rounded hover:bg-rose-500/30 text-rose-300"
                               title="Increment mistake count (2x, 3x...)"
                             >
@@ -1222,6 +1487,450 @@ export default function DosDontsPage() {
                 )}
               </div>
             </div>
+          </div>
+
+          {/* ========================================================= */}
+          {/* TRADE-BY-TRADE ACCOUNTABILITY & ROOT-CAUSE MATRIX          */}
+          {/* ========================================================= */}
+          <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl relative overflow-hidden">
+            {/* Ambient Lighting */}
+            <div className="absolute top-0 right-1/4 w-96 h-96 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute bottom-0 right-1/3 w-80 h-80 bg-rose-500/5 rounded-full blur-3xl pointer-events-none" />
+
+            {/* Header & Scope Switcher */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-5 border-b border-slate-800/90 relative z-10">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-sky-500/10 text-sky-400 border border-sky-500/30 text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 font-mono">
+                    <Target className="w-3.5 h-3.5" />
+                    Trade-Level Root Cause Analysis
+                  </span>
+                  <span className="text-slate-500 text-xs">•</span>
+                  <span className="text-xs text-slate-400 font-mono">
+                    In which trade you did what correct &amp; what wrong
+                  </span>
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                  Trade-by-Trade Performance &amp; Accountability
+                </h2>
+                <p className="text-xs sm:text-sm text-slate-400 max-w-3xl">
+                  Analyze every execution individually: tag specific DO&apos;s followed and DON&apos;Ts committed per trade. See how strictly following your rules directly influenced winning percentage and net PnL.
+                </p>
+              </div>
+
+              {/* Scope & Filter Controls */}
+              <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+                {/* Scope Switcher: Selected Day / Active Week / Month */}
+                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                  {(
+                    [
+                      { id: "SELECTED_DAY", label: `Day (${selectedDayTrades.length})` },
+                      { id: "WEEK", label: "Week" },
+                      { id: "MONTH", label: "Month" },
+                    ] as { id: typeof tradeMatrixScope; label: string }[]
+                  ).map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => setTradeMatrixScope(s.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        tradeMatrixScope === s.id
+                          ? "bg-sky-600 text-white shadow-md shadow-sky-600/30"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Filter Mode: All / Clean / Mistakes */}
+                <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+                  {(
+                    [
+                      { id: "ALL", label: "All" },
+                      { id: "CLEAN", label: "Clean" },
+                      { id: "MISTAKES", label: "Mistakes" },
+                    ] as { id: typeof tradeMatrixFilter; label: string }[]
+                  ).map((f) => (
+                    <button
+                      key={f.id}
+                      type="button"
+                      onClick={() => setTradeMatrixFilter(f.id)}
+                      className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                        tradeMatrixFilter === f.id
+                          ? "bg-slate-800 text-white border border-slate-700"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Execution Discipline & Win-Rate Correlation Banner */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="p-4 rounded-2xl bg-emerald-950/20 border border-emerald-500/30 space-y-1">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-emerald-400">
+                  <span className="flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4" /> Clean Trades (0 Mistakes)
+                  </span>
+                  <span className="font-mono">{tradeBehaviorStats.cleanTotal} Trades</span>
+                </div>
+                <div className="flex items-baseline justify-between pt-1">
+                  <span className="text-2xl font-black font-mono text-emerald-300">
+                    {tradeBehaviorStats.cleanWinRate}% Win Rate
+                  </span>
+                  <span className={`text-base font-black font-mono ${tradeBehaviorStats.cleanPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {tradeBehaviorStats.cleanPnl >= 0 ? "+" : ""}${tradeBehaviorStats.cleanPnl.toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-[11px] text-emerald-300/80">
+                  Trades executed with zero rule violations.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-rose-950/20 border border-rose-500/30 space-y-1">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-rose-400">
+                  <span className="flex items-center gap-1.5">
+                    <ShieldAlert className="w-4 h-4" /> Mistake Tainted (1+ Don&apos;ts)
+                  </span>
+                  <span className="font-mono">{tradeBehaviorStats.mistakeTotal} Trades</span>
+                </div>
+                <div className="flex items-baseline justify-between pt-1">
+                  <span className="text-2xl font-black font-mono text-rose-300">
+                    {tradeBehaviorStats.mistakeWinRate}% Win Rate
+                  </span>
+                  <span className={`text-base font-black font-mono ${tradeBehaviorStats.mistakePnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                    {tradeBehaviorStats.mistakePnl >= 0 ? "+" : ""}${tradeBehaviorStats.mistakePnl.toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-[11px] text-rose-300/80">
+                  Trades dragged down by emotional impulses or broken rules.
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-sky-950/20 border border-sky-500/30 space-y-1">
+                <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-sky-400">
+                  <span className="flex items-center gap-1.5">
+                    <TrendingUp className="w-4 h-4" /> Discipline Edge
+                  </span>
+                  <span className="font-mono">PnL Advantage</span>
+                </div>
+                <div className="flex items-baseline justify-between pt-1">
+                  <span className="text-2xl font-black font-mono text-white">
+                    +{Math.max(0, tradeBehaviorStats.cleanWinRate - tradeBehaviorStats.mistakeWinRate)}%
+                  </span>
+                  <span className="text-base font-black font-mono text-sky-300">
+                    {tradeBehaviorStats.cleanPnl - tradeBehaviorStats.mistakePnl >= 0 ? "+" : ""}${(tradeBehaviorStats.cleanPnl - tradeBehaviorStats.mistakePnl).toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-300">
+                  Net edge generated strictly by adhering to your plan.
+                </p>
+              </div>
+            </div>
+
+            {/* List of Trades with Behavior Details */}
+            {tradeBehaviorStats.tradeBreakdown.length === 0 ? (
+              <div className="p-10 rounded-2xl border border-dashed border-slate-800 text-center space-y-3">
+                <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-500 mx-auto">
+                  <Target className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-white">No Trades In This Scope</h4>
+                  <p className="text-xs text-slate-400 mt-1 max-w-md mx-auto">
+                    No trades were recorded for {tradeMatrixScope === "SELECTED_DAY" ? selectedDate : tradeMatrixScope === "WEEK" ? "this active week" : monthLabel}. Select a day with trades or click below to log a new trade in your journal.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsTradeModalOpen(true)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-500 text-white transition-colors cursor-pointer"
+                >
+                  + Log a Trade
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {tradeBehaviorStats.tradeBreakdown
+                  .filter((item) => {
+                    if (tradeMatrixFilter === "CLEAN") return !item.isMistakeTainted;
+                    if (tradeMatrixFilter === "MISTAKES") return item.isMistakeTainted;
+                    return true;
+                  })
+                  .map(({ trade, dos, donts, dosCount, dontsCount, grade }) => {
+                    const isWon = trade.status === "WON" || trade.pnl > 0;
+                    const isLost = trade.status === "LOST" || trade.pnl < 0;
+                    const isQuickTagging = quickTagTradeId === trade.id;
+                    const tradeDateStr = (trade.trade_date || "").slice(0, 10);
+
+                    return (
+                      <div
+                        key={trade.id}
+                        className={`rounded-2xl border p-4 sm:p-5 transition-all space-y-3.5 ${
+                          isQuickTagging
+                            ? "bg-slate-900/90 border-sky-500/50 shadow-xl"
+                            : isWon
+                            ? "bg-slate-900/50 border-slate-800/90 hover:border-slate-700"
+                            : isLost
+                            ? "bg-slate-900/50 border-slate-800/90 hover:border-slate-700"
+                            : "bg-slate-900/40 border-slate-800/80"
+                        }`}
+                      >
+                        {/* Trade Row Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`p-2.5 rounded-xl border flex items-center justify-center font-bold text-xs ${
+                                (trade.direction || "LONG") === "LONG"
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                                  : "bg-rose-500/10 text-rose-400 border-rose-500/30"
+                              }`}
+                            >
+                              {(trade.direction || "LONG") === "LONG" ? (
+                                <TrendingUp className="w-4 h-4" />
+                              ) : (
+                                <TrendingDown className="w-4 h-4" />
+                              )}
+                            </div>
+
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-base font-black text-white font-mono">
+                                  {trade.symbol}
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-black font-mono uppercase border ${
+                                    (trade.direction || "LONG") === "LONG"
+                                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                                      : "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                                  }`}
+                                >
+                                  {trade.direction || "LONG"}
+                                </span>
+                                <span className="text-xs text-slate-400 font-mono">
+                                  {tradeDateStr}
+                                </span>
+                              </div>
+
+                              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400 font-mono mt-0.5">
+                                {trade.entry_price && (
+                                  <span>Entry: ${Number(trade.entry_price).toLocaleString()}</span>
+                                )}
+                                {trade.exit_price && (
+                                  <span>Exit: ${Number(trade.exit_price).toLocaleString()}</span>
+                                )}
+                                {trade.timeframe && <span>TF: {trade.timeframe}</span>}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* PnL & Trade Grade */}
+                          <div className="flex items-center gap-3 self-end sm:self-auto">
+                            {grade && (
+                              <span
+                                className={`px-2.5 py-1 rounded-xl text-xs font-black font-mono border ${grade.bg} ${grade.color}`}
+                                title={`Discipline Grade based on ${dosCount} Do's vs ${dontsCount} Don'ts`}
+                              >
+                                Grade {grade.grade}
+                              </span>
+                            )}
+
+                            <div className="text-right">
+                              <span
+                                className={`text-lg sm:text-xl font-black font-mono block ${
+                                  isWon
+                                    ? "text-emerald-400"
+                                    : isLost
+                                    ? "text-rose-400"
+                                    : "text-slate-300"
+                                }`}
+                              >
+                                {trade.pnl >= 0 ? `+$${Number(trade.pnl).toLocaleString()}` : `-$${Math.abs(Number(trade.pnl)).toLocaleString()}`}
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-500 uppercase">
+                                {trade.status || "CLOSED"}
+                              </span>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setQuickTagTradeId(isQuickTagging ? null : trade.id)
+                              }
+                              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                isQuickTagging
+                                  ? "bg-sky-600 text-white border-sky-500"
+                                  : "bg-slate-800 text-slate-300 border-slate-700 hover:text-white hover:border-slate-600"
+                              }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>{isQuickTagging ? "Close" : "Tag Do / Don't"}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Behavior Badges on this Trade */}
+                        <div className="pt-2 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mr-1">
+                            Behavior Audit:
+                          </span>
+
+                          {dos.length === 0 && donts.length === 0 && (
+                            <span className="text-xs text-slate-500 italic">
+                              No behaviors tagged yet — click &ldquo;Tag Do / Don&apos;t&rdquo; to analyze this trade.
+                            </span>
+                          )}
+
+                          {dos.map((item) => (
+                            <div
+                              key={`t_do_${trade.id}_${item.label}`}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-xs text-emerald-200"
+                            >
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+                              <span className="font-semibold">{item.label}</span>
+                              <div className="flex items-center gap-1 ml-1 pl-1.5 border-l border-emerald-500/30 font-mono">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateItemCount("DO", item.label, -1, item.category, trade.id)
+                                  }
+                                  className="p-0.5 rounded hover:bg-emerald-500/30 text-emerald-300"
+                                  title="Decrease count"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <span className="font-black text-emerald-300">{item.count}x</span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateItemCount("DO", item.label, 1, item.category, trade.id)
+                                  }
+                                  className="p-0.5 rounded hover:bg-emerald-500/30 text-emerald-300"
+                                  title="Increment count"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {donts.map((item) => (
+                            <div
+                              key={`t_dont_${trade.id}_${item.label}`}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200"
+                            >
+                              <XCircle className="w-3.5 h-3.5 text-rose-400 flex-shrink-0" />
+                              <span className="font-semibold">{item.label}</span>
+                              <div className="flex items-center gap-1 ml-1 pl-1.5 border-l border-rose-500/30 font-mono">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateItemCount("DONT", item.label, -1, item.category, trade.id)
+                                  }
+                                  className="p-0.5 rounded hover:bg-rose-500/30 text-rose-300"
+                                  title="Decrease count"
+                                >
+                                  <Minus className="w-3 h-3" />
+                                </button>
+                                <span className="font-black text-rose-300">{item.count}x</span>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateItemCount("DONT", item.label, 1, item.category, trade.id)
+                                  }
+                                  className="p-0.5 rounded hover:bg-rose-500/30 text-rose-300"
+                                  title="Increment mistake count"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Quick Tagging Accordion Drawer for this trade */}
+                        {isQuickTagging && (
+                          <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3 mt-2 animate-in fade-in duration-200">
+                            <div className="flex items-center justify-between text-xs font-bold text-slate-300">
+                              <span className="flex items-center gap-1.5">
+                                <Target className="w-3.5 h-3.5 text-sky-400" />
+                                1-Click Attach to {trade.symbol} ({trade.direction})
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setQuickTagTradeId(null)}
+                                className="text-slate-400 hover:text-white"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            {/* DOs chips */}
+                            <div className="space-y-1.5">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                                What did you do right on this trade?
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {doTemplates.map((tpl) => {
+                                  const cnt = getSelectedCount("DO", tpl.label, trade.id);
+                                  return (
+                                    <button
+                                      key={`tq_do_${tpl.id}`}
+                                      type="button"
+                                      onClick={() =>
+                                        updateItemCount("DO", tpl.label, 1, tpl.category, trade.id)
+                                      }
+                                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                                        cnt > 0
+                                          ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/50"
+                                          : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white hover:border-emerald-500/40"
+                                      }`}
+                                    >
+                                      ✓ {tpl.label} {cnt > 0 && `(${cnt}x)`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+
+                            {/* DONTs chips */}
+                            <div className="space-y-1.5 pt-2 border-t border-slate-800">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400">
+                                What mistake did you make on this trade?
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {dontTemplates.map((tpl) => {
+                                  const cnt = getSelectedCount("DONT", tpl.label, trade.id);
+                                  return (
+                                    <button
+                                      key={`tq_dont_${tpl.id}`}
+                                      type="button"
+                                      onClick={() =>
+                                        updateItemCount("DONT", tpl.label, 1, tpl.category, trade.id)
+                                      }
+                                      className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all cursor-pointer ${
+                                        cnt > 0
+                                          ? "bg-rose-500/20 text-rose-300 border-rose-500/50"
+                                          : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white hover:border-rose-500/40"
+                                      }`}
+                                    >
+                                      ✕ {tpl.label} {cnt > 0 && `(${cnt}x)`}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
           </div>
         </main>
       </div>

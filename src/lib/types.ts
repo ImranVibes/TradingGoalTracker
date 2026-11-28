@@ -326,6 +326,10 @@ export interface DailyBehaviorItem {
   kind: "DO" | "DONT";
   count: number;
   category?: string;
+  trade_id?: string;
+  trade_symbol?: string;
+  trade_direction?: string;
+  trade_pnl?: number;
 }
 
 export interface DailyDosDontsLog {

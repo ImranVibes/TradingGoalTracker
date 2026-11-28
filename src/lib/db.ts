@@ -3662,6 +3662,15 @@ function parseBehaviorItems(raw: any): DailyBehaviorItem[] {
       kind: x.kind === "DONT" ? ("DONT" as const) : ("DO" as const),
       count: Math.max(1, Math.min(99, Math.round(Number(x.count || 1)))),
       category: x.category ? String(x.category).trim() : "General",
+      trade_id: x.trade_id ? String(x.trade_id).trim() : undefined,
+      trade_symbol: x.trade_symbol ? String(x.trade_symbol).trim().toUpperCase() : undefined,
+      trade_direction: x.trade_direction ? String(x.trade_direction).trim().toUpperCase() : undefined,
+      trade_pnl:
+        typeof x.trade_pnl === "number"
+          ? x.trade_pnl
+          : x.trade_pnl !== undefined && x.trade_pnl !== null
+          ? Number(x.trade_pnl)
+          : undefined,
     }));
 }
 
