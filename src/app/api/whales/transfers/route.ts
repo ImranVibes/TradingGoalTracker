@@ -72,7 +72,6 @@ function getTimeAgo(epochMs: number): string {
 // Normalize symbol for Binance Futures
 function normalizeBinanceSymbol(sym: string): string {
   const cleaned = sym.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  // Map common meme/small caps to 1000x contracts if needed
   if (cleaned === "PEPEUSDT") return "1000PEPEUSDT";
   if (cleaned === "SHIBUSDT") return "1000SHIBUSDT";
   if (cleaned === "BONKUSDT") return "1000BONKUSDT";
@@ -88,6 +87,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
     const rawSymbol = searchParams.get("symbol") || "BTCUSDT";
+    const selectedWindow = (searchParams.get("window") || "1h").toLowerCase(); // 15m, 1h, 4h, 24h
     const binanceSymbol = normalizeBinanceSymbol(rawSymbol);
     const baseAsset = rawSymbol.replace(/USDT$|BUSD$|USDC$/, "");
 
@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
         whaleAlertTxs = whaleAlertCache.data;
       } else {
         try {
-          const startTimestamp = Math.floor((now - 3600_000) / 1000); // last 1 hour
+          const startTimestamp = Math.floor((now - 3600_000) / 1000);
           const urls = [
             `https://leviathan.whale-alert.io/v1/transactions?api_key=${apiKey}&min_value=250000&start=${startTimestamp}&limit=50`,
             `https://api.whale-alert.io/v1/transactions?api_key=${apiKey}&min_value=250000&start=${startTimestamp}&limit=50`,
@@ -124,9 +124,7 @@ export async function GET(req: NextRequest) {
                   break;
                 }
               }
-            } catch (err: any) {
-              // Try next URL fallback
-            }
+            } catch (err: any) {}
           }
 
           if (!fetched && !whaleAlertCache) {
@@ -138,25 +136,75 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 2. Fetch Binance USD-M aggTrades for real-time order-flow whales
+    // 2. Fetch Binance USD-M aggTrades & Klines for true Multi-Timeframe Window Aggregation
+    const [aggRes, k15Res, k1hRes] = await Promise.allSettled([
+      fetch(`https://fapi.binance.com/fapi/v1/aggTrades?symbol=${binanceSymbol}&limit=500`, {
+        next: { revalidate: 0 },
+        signal: AbortSignal.timeout(5000),
+      }),
+      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${binanceSymbol}&interval=15m&limit=20`, {
+        next: { revalidate: 0 },
+        signal: AbortSignal.timeout(5000),
+      }),
+      fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=${binanceSymbol}&interval=1h&limit=24`, {
+        next: { revalidate: 0 },
+        signal: AbortSignal.timeout(5000),
+      }),
+    ]);
+
     let binanceTrades: any[] = [];
-    try {
-      const aggRes = await fetch(
-        `https://fapi.binance.com/fapi/v1/aggTrades?symbol=${binanceSymbol}&limit=500`,
-        { next: { revalidate: 0 }, signal: AbortSignal.timeout(5000) }
-      );
-      if (aggRes.ok) {
-        binanceTrades = await aggRes.json();
-      }
-    } catch (err) {
-      console.warn("Binance aggTrades error:", err);
+    if (aggRes.status === "fulfilled" && aggRes.value.ok) {
+      binanceTrades = await aggRes.value.json();
     }
+
+    let klines15m: any[] = [];
+    if (k15Res.status === "fulfilled" && k15Res.value.ok) {
+      klines15m = await k15Res.value.json();
+    }
+
+    let klines1h: any[] = [];
+    if (k1hRes.status === "fulfilled" && k1hRes.value.ok) {
+      klines1h = await k1hRes.value.json();
+    }
+
+    // -------------------------------------------------------------
+    // Multi-Timeframe Aggregated Institutional Volume (True 1h, 4h, 24h Flow)
+    // -------------------------------------------------------------
+    const calculateKlineWindowFlow = (klines: any[], count: number) => {
+      const slice = klines.slice(-count);
+      let buyUsd = 0;
+      let sellUsd = 0;
+      for (const k of slice) {
+        const quoteVol = parseFloat(k[7]);
+        const takerBuy = parseFloat(k[10]);
+        const takerSell = Math.max(0, quoteVol - takerBuy);
+        buyUsd += takerBuy;
+        sellUsd += takerSell;
+      }
+      return {
+        buyUsd: Math.round(buyUsd),
+        sellUsd: Math.round(sellUsd),
+        netFlowUsd: Math.round(buyUsd - sellUsd),
+        totalVolumeUsd: Math.round(buyUsd + sellUsd),
+        dumpRiskScore: buyUsd + sellUsd > 0 ? Math.round((sellUsd / (buyUsd + sellUsd)) * 100) : 50,
+      };
+    };
+
+    const windowFlow15m = calculateKlineWindowFlow(klines15m, 1);
+    const windowFlow1h = calculateKlineWindowFlow(klines15m, 4);
+    const windowFlow4h = calculateKlineWindowFlow(klines1h, 4);
+    const windowFlow24h = calculateKlineWindowFlow(klines1h, 24);
+
+    // Selected Window Flow
+    let activeWindowData = windowFlow1h;
+    if (selectedWindow === "15m") activeWindowData = windowFlow15m;
+    else if (selectedWindow === "4h") activeWindowData = windowFlow4h;
+    else if (selectedWindow === "24h") activeWindowData = windowFlow24h;
 
     // 3. Process Binance Large Block Trades & Aggressive Market Dumps
     const unifiedItems: UnifiedWhaleItem[] = [];
 
     if (Array.isArray(binanceTrades) && binanceTrades.length > 0) {
-      // Compute notional values
       const parsedTrades = binanceTrades.map((t) => {
         const price = parseFloat(t.p);
         const qty = parseFloat(t.q);
@@ -166,27 +214,22 @@ export async function GET(req: NextRequest) {
           price,
           qty,
           usd,
-          isBuyerMaker: Boolean(t.m), // true = Seller market aggressive (DUMP), false = Buyer market aggressive (BUY)
+          isBuyerMaker: Boolean(t.m),
           timestamp: t.T,
         };
       });
 
-      // Determine dynamic threshold based on token liquidity
       const isMegaCap = binanceSymbol.includes("BTC") || binanceSymbol.includes("ETH");
       const isHighCap = binanceSymbol.includes("SOL") || binanceSymbol.includes("BNB") || binanceSymbol.includes("XRP");
-      
       const defaultThreshold = isMegaCap ? 75_000 : isHighCap ? 40_000 : 15_000;
 
-      // Filter trades meeting threshold
       const filteredTrades = parsedTrades.filter((t) => t.usd >= defaultThreshold);
-
-      // If fewer than 5 trades meet threshold, take top 10 largest trades
       const finalTrades =
         filteredTrades.length >= 5
           ? filteredTrades
           : [...parsedTrades].sort((a, b) => b.usd - a.usd).slice(0, 8);
 
-      // Detect clustered Market Maker waves (trades within 2.5 seconds in the same direction)
+      // Clustered MM waves
       const clusters: Array<{
         trades: typeof finalTrades;
         totalUsd: number;
@@ -230,7 +273,6 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Add clustered wave items first if significant
       for (const c of clusters) {
         if (c.totalUsd >= 50_000 || (!isMegaCap && c.totalUsd >= 20_000)) {
           unifiedItems.push({
@@ -255,7 +297,6 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // Add individual large block trades
       for (const t of finalTrades) {
         const isDump = t.isBuyerMaker;
         const tier =
@@ -293,7 +334,6 @@ export async function GET(req: NextRequest) {
     if (whaleAlertTxs.length > 0) {
       for (const tx of whaleAlertTxs) {
         const txSymbol = (tx.symbol || "").toUpperCase();
-        // Check if token matches active symbol or major stablecoins (USDT/USDC often indicate buying/selling dry powder)
         const isTargetCoin =
           txSymbol === baseAsset ||
           (baseAsset === "BTC" && txSymbol === "BTC") ||
@@ -358,59 +398,82 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Sort all items newest first
     unifiedItems.sort((a, b) => b.timestamp - a.timestamp);
 
-    // 5. Calculate Comprehensive Whale Inflow/Outflow Pressure
-    let totalDumpUsd = 0;
-    let totalAccumulationUsd = 0;
-    let maxTxUsd = 0;
-
-    for (const item of unifiedItems) {
-      if (item.amountUsd > maxTxUsd) maxTxUsd = item.amountUsd;
-      if (item.isDump) {
-        totalDumpUsd += item.amountUsd;
-      } else {
-        totalAccumulationUsd += item.amountUsd;
-      }
-    }
-
-    const netFlowUsd = totalAccumulationUsd - totalDumpUsd;
-    const totalVolumeUsd = totalDumpUsd + totalAccumulationUsd;
-
-    // Dump Risk Score (0 = extreme accumulation, 50 = balanced, 100 = extreme dump risk)
-    let dumpRiskScore = 50;
-    if (totalVolumeUsd > 0) {
-      dumpRiskScore = Math.round((totalDumpUsd / totalVolumeUsd) * 100);
-    }
+    // 5. Robust Noise-Filtered Dump Risk Calculation
+    // Use the active window's cumulative flow to anchor the score, so a single tick doesn't flip-flop!
+    const dumpRiskScore = activeWindowData.dumpRiskScore;
+    const totalDumpUsd = activeWindowData.sellUsd;
+    const totalAccumulationUsd = activeWindowData.buyUsd;
+    const netFlowUsd = activeWindowData.netFlowUsd;
 
     let dominantState: "HIGH_DUMP_RISK" | "ACCUMULATION_SQUEEZE" | "BALANCED_CHURN" =
       "BALANCED_CHURN";
-    let summaryHeadline = "Order Flow Balanced: Whales & MM executing evenly on both sides.";
-    let actionRecommendation = "Neutral: Monitor if sell blocks increase or if bids get absorbed.";
+    let summaryHeadline = `${selectedWindow.toUpperCase()} Institutional Order Flow is Balanced: No dominant direction.`;
+    let actionRecommendation =
+      "Noise / Churn Detected: Market makers are trading within a tight range. Avoid taking breakout or breakdown trades right now.";
 
-    if (dumpRiskScore >= 65) {
+    if (dumpRiskScore >= 62) {
       dominantState = "HIGH_DUMP_RISK";
-      summaryHeadline = `🚨 HIGH DUMP WARNING: Sell pressure dominates with $${(
+      summaryHeadline = `🚨 ${selectedWindow.toUpperCase()} INSTITUTIONAL DUMP PRESSURE: Sustained sell pressure with $${(
         totalDumpUsd / 1e6
-      ).toFixed(2)}M in aggressive dump volume vs $${(
-        totalAccumulationUsd / 1e6
-      ).toFixed(2)}M buy volume.`;
+      ).toFixed(2)}M sold vs $${(totalAccumulationUsd / 1e6).toFixed(2)}M bought.`;
       actionRecommendation =
-        "Caution on Longs: Market makers and large whales are hitting bids aggressively. Watch for sudden down-spikes.";
-    } else if (dumpRiskScore <= 35) {
+        "Caution on Longs: Persistent selling across the selected window. Do not FOMO long until selling volume drops below 40%.";
+    } else if (dumpRiskScore <= 38) {
       dominantState = "ACCUMULATION_SQUEEZE";
-      summaryHeadline = `🟢 WHALE ACCUMULATION DOMINANT: Strong buying demand with $${(
+      summaryHeadline = `🟢 ${selectedWindow.toUpperCase()} INSTITUTIONAL ACCUMULATION: Strong buying absorption with $${(
         totalAccumulationUsd / 1e6
       ).toFixed(2)}M absorbed vs $${(totalDumpUsd / 1e6).toFixed(2)}M sold.`;
       actionRecommendation =
-        "Bullish Bias: Smart money is aggressively sweeping asks and withdrawing liquidity. Short squeezes likely.";
+        "Bullish Momentum: Smart money is net absorbing asks. Short squeezes favored on pullbacks.";
+    }
+
+    // 6. 1h-4h Forward Prediction & Exhaustion Detector
+    // Detect if market is dumping into support (Capitulation) or pumping into resistance (Distribution)
+    let forwardPrediction = {
+      isCapitulationBottom: false,
+      isExhaustionTop: false,
+      horizon: "1h–4h Forward Outlook",
+      warningBadge: "NORMAL_FLOW",
+      warningText: "Order flow aligned with current market structure.",
+      advice: "Trade in direction of confirmed trend pullbacks.",
+    };
+
+    if (klines1h.length >= 4) {
+      const currentPrice = parseFloat(klines1h[klines1h.length - 1][4]);
+      const price4hAgo = parseFloat(klines1h[klines1h.length - 4][1]);
+      const priceChange4hPct = ((currentPrice - price4hAgo) / price4hAgo) * 100;
+
+      // If price dumped > 2.5% in 4h but 1h flow is starting to absorb
+      if (priceChange4hPct <= -2.5 && windowFlow1h.dumpRiskScore < 55) {
+        forwardPrediction = {
+          isCapitulationBottom: true,
+          isExhaustionTop: false,
+          horizon: "1h–4h Mean Reversion Horizon",
+          warningBadge: "⚠️ POTENTIAL BEAR TRAP / EXHAUSTION DUMP",
+          warningText:
+            "Price has dumped into a potential exhaustion bottom. Aggressive market sellers are stalling while smart money begins absorbing. High probability of a sharp 1h-4h relief bounce.",
+          advice: "DO NOT SHORT INTO THE HOLE: Wait for relief bounce or confirmation before entering shorts.",
+        };
+      } else if (priceChange4hPct >= 2.5 && windowFlow1h.dumpRiskScore > 45) {
+        forwardPrediction = {
+          isCapitulationBottom: false,
+          isExhaustionTop: true,
+          horizon: "1h–4h Distribution Horizon",
+          warningBadge: "⚠️ POTENTIAL BULL TRAP / EXHAUSTION TOP",
+          warningText:
+            "Price has pumped aggressively into overhead resistance. Buying volume is decelerating against institutional supply walls. High probability of a 1h-4h mean-reversion pullback.",
+          advice: "DO NOT FOMO LONG AT THE TOP: Wait for pullback into demand blocks before adding longs.",
+        };
+      }
     }
 
     return NextResponse.json({
       success: true,
       symbol: rawSymbol,
       binanceSymbol,
+      selectedWindow,
       engine: isWhaleAlertConfigured ? "HYBRID_ONCHAIN_AND_BLOCKS" : "REALTIME_BINANCE_ORDER_FLOW",
       whaleAlertConfigured: isWhaleAlertConfigured,
       whaleAlertError,
@@ -423,8 +486,15 @@ export async function GET(req: NextRequest) {
         dominantState,
         summaryHeadline,
         actionRecommendation,
-        maxTxUsd,
+        maxTxUsd: unifiedItems.length > 0 ? Math.max(...unifiedItems.map((u) => u.amountUsd)) : 0,
       },
+      windows: {
+        "15m": windowFlow15m,
+        "1h": windowFlow1h,
+        "4h": windowFlow4h,
+        "24h": windowFlow24h,
+      },
+      forwardPrediction,
       transfers: unifiedItems.slice(0, 40),
     });
   } catch (error: any) {
@@ -436,7 +506,6 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST endpoint to save or update Whale Alert API key
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -449,10 +518,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Verify key with Whale Alert
     const testUrl = `https://leviathan.whale-alert.io/v1/transactions?api_key=${apiKey}&min_value=5000000&limit=1`;
     let isValid = false;
-    let message = "";
 
     try {
       const res = await fetch(testUrl, { signal: AbortSignal.timeout(6000) });
@@ -467,21 +534,15 @@ export async function POST(req: NextRequest) {
           { status: 400 }
         );
       } else {
-        // Fallback check on status endpoint
         const statRes = await fetch("https://leviathan.whale-alert.io/status");
-        if (statRes.ok) {
-          // If status is ok, accept the key
-          isValid = true;
-        }
+        if (statRes.ok) isValid = true;
       }
     } catch (err: any) {
-      // Network timeout or error
-      isValid = true; // Still allow saving so user can use when network clears
+      isValid = true;
     }
 
     if (isValid) {
       await setSettingValue("whale_alert_api_key", apiKey);
-      // Reset cache
       whaleAlertCache = null;
       return NextResponse.json({
         success: true,
@@ -501,7 +562,6 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// DELETE endpoint to disconnect / remove Whale Alert API key
 export async function DELETE() {
   try {
     await setSettingValue("whale_alert_api_key", null);

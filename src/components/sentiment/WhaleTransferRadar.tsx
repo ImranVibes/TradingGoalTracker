@@ -7,6 +7,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Check,
+  Clock,
   Compass,
   Copy,
   ExternalLink,
@@ -17,6 +18,7 @@ import {
   Lock,
   Radio,
   RefreshCw,
+  Scale,
   ShieldAlert,
   ShieldCheck,
   TrendingDown,
@@ -56,6 +58,7 @@ interface WhaleRadarResponse {
   success: boolean;
   symbol: string;
   binanceSymbol: string;
+  selectedWindow: string;
   engine: string;
   whaleAlertConfigured: boolean;
   whaleAlertError?: string | null;
@@ -69,6 +72,20 @@ interface WhaleRadarResponse {
     summaryHeadline: string;
     actionRecommendation: string;
     maxTxUsd: number;
+  };
+  windows?: {
+    "15m": { buyUsd: number; sellUsd: number; netFlowUsd: number; dumpRiskScore: number };
+    "1h": { buyUsd: number; sellUsd: number; netFlowUsd: number; dumpRiskScore: number };
+    "4h": { buyUsd: number; sellUsd: number; netFlowUsd: number; dumpRiskScore: number };
+    "24h": { buyUsd: number; sellUsd: number; netFlowUsd: number; dumpRiskScore: number };
+  };
+  forwardPrediction?: {
+    isCapitulationBottom: boolean;
+    isExhaustionTop: boolean;
+    horizon: string;
+    warningBadge: string;
+    warningText: string;
+    advice: string;
   };
   transfers: UnifiedWhaleItem[];
 }
@@ -86,6 +103,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<"ALL" | "DUMPS" | "BUYS" | "WAVES">("ALL");
+  const [selectedWindow, setSelectedWindow] = useState<"15m" | "1h" | "4h" | "24h">("1h");
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date>(new Date());
 
   // Whale Alert Key Modal State
@@ -98,7 +116,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
     try {
       setLoading(true);
       setError(null);
-      const res = await fetch(`/api/whales/transfers?symbol=${encodeURIComponent(symbol)}`);
+      const res = await fetch(`/api/whales/transfers?symbol=${encodeURIComponent(symbol)}&window=${selectedWindow}`);
       if (!res.ok) throw new Error(`HTTP error ${res.status}`);
       const json: WhaleRadarResponse = await res.json();
       if (!json.success) throw new Error("Failed to load whale radar data");
@@ -110,11 +128,10 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, selectedWindow]);
 
   useEffect(() => {
     fetchWhaleData();
-    // Auto-refresh every 20 seconds for live order flow tracking
     const interval = setInterval(fetchWhaleData, 20_000);
     return () => clearInterval(interval);
   }, [fetchWhaleData]);
@@ -182,6 +199,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
   const summary = data?.summary;
   const isHighDumpRisk = summary?.dominantState === "HIGH_DUMP_RISK";
   const isAccumulation = summary?.dominantState === "ACCUMULATION_SQUEEZE";
+  const fwd = data?.forwardPrediction;
 
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl relative overflow-hidden">
@@ -209,12 +227,12 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
               {data?.whaleAlertConfigured ? (
                 <span className="text-emerald-400 font-semibold flex items-center gap-1">
                   <ShieldCheck className="w-3.5 h-3.5" />
-                  Dual Engine Active (On-Chain + Order Flow)
+                  Dual Engine Active (On-Chain + Multi-Window Order Flow)
                 </span>
               ) : (
                 <span className="text-sky-400 font-medium flex items-center gap-1">
                   <Zap className="w-3.5 h-3.5 text-sky-400" />
-                  Binance Institutional Order Flow Engine (Free Tier)
+                  Binance Institutional Multi-Timeframe Order Flow
                 </span>
               )}
             </span>
@@ -227,12 +245,33 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
             </span>
           </h3>
           <p className="text-xs sm:text-sm text-slate-400 max-w-3xl">
-            Real-time detection of high-value block orders, market maker multi-part dump waves, and large wallet-to-exchange deposits.
+            Sustained multi-timeframe order flow analysis. Filters out rapid tick-level flip-flopping noise so you see the true cumulative institutional direction over 1 hour, 4 hours, or the whole day.
           </p>
         </div>
 
-        {/* Action Controls */}
-        <div className="flex flex-wrap items-center gap-2.5 self-start lg:self-center">
+        {/* Time Window Selector & Action Controls */}
+        <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+          {/* Time Window Switcher */}
+          <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
+            <span className="text-[10px] text-slate-400 font-bold px-1.5 uppercase font-mono">
+              Window:
+            </span>
+            {(["15m", "1h", "4h", "24h"] as const).map((w) => (
+              <button
+                key={w}
+                type="button"
+                onClick={() => setSelectedWindow(w)}
+                className={`px-2.5 py-1 rounded-lg text-xs font-black font-mono transition-all cursor-pointer ${
+                  selectedWindow === w
+                    ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/30"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                {w.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
           <button
             type="button"
             onClick={() => setIsKeyModalOpen(true)}
@@ -243,7 +282,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
             }`}
           >
             <Key className="w-3.5 h-3.5" />
-            <span>{data?.whaleAlertConfigured ? "Whale Alert Connected" : "Connect Whale Alert API"}</span>
+            <span className="hidden sm:inline">{data?.whaleAlertConfigured ? "Whale Alert Active" : "Connect Whale Alert API"}</span>
           </button>
 
           <button
@@ -259,7 +298,53 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
       </div>
 
       {/* ========================================================= */}
-      {/* 2. DUMP RISK SPECTRUM & EXECUTIVE PRESSURE METER           */}
+      {/* 2. FORWARD-LOOKING 1H-4H EXHAUSTION ALERT BANNER          */}
+      {/* ========================================================= */}
+      {fwd && (fwd.isCapitulationBottom || fwd.isExhaustionTop) && (
+        <div
+          className={`p-4 sm:p-5 rounded-2xl border transition-all animate-in fade-in duration-300 relative z-10 ${
+            fwd.isCapitulationBottom
+              ? "bg-amber-950/30 border-amber-500/50 shadow-[0_0_25px_rgba(245,158,11,0.15)]"
+              : "bg-rose-950/30 border-rose-500/50 shadow-[0_0_25px_rgba(244,63,94,0.15)]"
+          }`}
+        >
+          <div className="flex items-start gap-3">
+            <div
+              className={`p-2 rounded-xl mt-0.5 flex-shrink-0 ${
+                fwd.isCapitulationBottom
+                  ? "bg-amber-500/20 text-amber-400"
+                  : "bg-rose-500/20 text-rose-400"
+              }`}
+            >
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider font-mono px-2 py-0.5 rounded bg-slate-900 text-amber-300 border border-amber-500/30">
+                  {fwd.warningBadge}
+                </span>
+                <span className="text-slate-500 text-xs">•</span>
+                <span className="text-xs font-mono text-slate-400">{fwd.horizon}</span>
+              </div>
+
+              <h4 className="text-sm sm:text-base font-black text-white leading-snug">
+                {fwd.warningText}
+              </h4>
+
+              <div className="text-xs text-amber-200 font-bold pt-1">
+                <strong className="text-white uppercase tracking-wider text-[11px]">
+                  Professional Rule:{" "}
+                </strong>
+                {fwd.advice}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 3. SUSTAINED WINDOW PRESSURE METER & RISK SCORE           */}
       {/* ========================================================= */}
       {summary && (
         <div className="space-y-4 relative z-10">
@@ -274,11 +359,11 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
           >
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span
                     className={`px-3 py-1 rounded-xl text-xs font-black uppercase tracking-wider inline-flex items-center gap-1.5 border ${
                       isHighDumpRisk
-                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
+                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
                         : isAccumulation
                         ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
                         : "bg-slate-800 text-slate-300 border-slate-700"
@@ -287,23 +372,23 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                     {isHighDumpRisk ? (
                       <>
                         <ShieldAlert className="w-4 h-4 text-rose-400" />
-                        🚨 DUMP RISK: HIGH
+                        🚨 {selectedWindow.toUpperCase()} DUMP PRESSURE HIGH
                       </>
                     ) : isAccumulation ? (
                       <>
                         <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                        🟢 ACCUMULATION: DOMINANT
+                        🟢 {selectedWindow.toUpperCase()} ACCUMULATION DOMINANT
                       </>
                     ) : (
                       <>
                         <Activity className="w-4 h-4 text-amber-400" />
-                        ⚖️ BALANCED ORDER FLOW
+                        ⚖️ {selectedWindow.toUpperCase()} BALANCED FLOW / CHOP
                       </>
                     )}
                   </span>
 
                   <span className="text-xs font-mono text-slate-400">
-                    Dump Pressure Score:{" "}
+                    Sustained Dump Score:{" "}
                     <strong
                       className={`num-tabular font-bold ${
                         isHighDumpRisk
@@ -330,8 +415,8 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
               {/* Dynamic Inflow/Outflow Balance Meter */}
               <div className="min-w-[240px] p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-2 self-stretch md:self-auto flex flex-col justify-center">
                 <div className="flex justify-between text-[11px] font-bold uppercase tracking-wider">
-                  <span className="text-emerald-400">Sweeps / Outflows</span>
-                  <span className="text-rose-400">Dumps / Inflows</span>
+                  <span className="text-emerald-400">Sustained Sweeps</span>
+                  <span className="text-rose-400">Sustained Dumps</span>
                 </div>
 
                 <div className="relative h-3 w-full bg-slate-950 rounded-full overflow-hidden p-0.5 border border-slate-800">
@@ -339,7 +424,6 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                     className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500 rounded-full transition-all duration-500"
                     style={{ width: "100%" }}
                   />
-                  {/* Gauge marker */}
                   <div
                     className="absolute top-0 bottom-0 w-2 bg-white rounded-full shadow-[0_0_8px_white] transition-all duration-300"
                     style={{ left: `calc(${summary.dumpRiskScore}% - 4px)` }}
@@ -354,11 +438,11 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
             </div>
           </div>
 
-          {/* 3 Quick KPI Stat Cards */}
+          {/* 4 Quick KPI Stat Cards for chosen window */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
             <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
-                Net Whale Inflow / Outflow
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block font-mono">
+                {selectedWindow.toUpperCase()} Net Institutional Flow
               </span>
               <div
                 className={`text-xl sm:text-2xl font-black font-mono num-tabular tracking-tight ${
@@ -372,45 +456,45 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                 {summary.netFlowUsd > 0 ? `+${formatUsd(summary.netFlowUsd)}` : formatUsd(summary.netFlowUsd)}
               </div>
               <span className="text-[11px] text-slate-400 block">
-                {summary.netFlowUsd > 0 ? "Net buying absorption" : "Net market maker sell pressure"}
+                {summary.netFlowUsd > 0 ? "Net buying accumulation" : "Net market maker distribution"}
               </span>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
-                Total Aggressive Dumps
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block font-mono">
+                {selectedWindow.toUpperCase()} Aggressive Selling
               </span>
               <div className="text-xl sm:text-2xl font-black font-mono num-tabular tracking-tight text-rose-400">
                 {formatUsd(summary.totalDumpUsd)}
               </div>
-              <span className="text-[11px] text-slate-400 block">Market sells & exchange deposits</span>
+              <span className="text-[11px] text-slate-400 block">Total taker market sell volume</span>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
-                Total Aggressive Sweeps
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block font-mono">
+                {selectedWindow.toUpperCase()} Aggressive Buying
               </span>
               <div className="text-xl sm:text-2xl font-black font-mono num-tabular tracking-tight text-emerald-400">
                 {formatUsd(summary.totalAccumulationUsd)}
               </div>
-              <span className="text-[11px] text-slate-400 block">Market buys & exchange withdrawals</span>
+              <span className="text-[11px] text-slate-400 block">Total taker market sweep volume</span>
             </div>
 
             <div className="p-4 rounded-2xl bg-slate-950/70 border border-slate-800/80 space-y-1">
-              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">
-                Largest Single Transfer
+              <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block font-mono">
+                Peak Single Block Order
               </span>
               <div className="text-xl sm:text-2xl font-black font-mono num-tabular tracking-tight text-amber-400">
                 {formatUsd(summary.maxTxUsd)}
               </div>
-              <span className="text-[11px] text-slate-400 block">Peak institutional block size</span>
+              <span className="text-[11px] text-slate-400 block">Largest recorded institutional block</span>
             </div>
           </div>
         </div>
       )}
 
       {/* ========================================================= */}
-      {/* 3. FILTER TABS & TRANSACTION FEED                          */}
+      {/* 4. FILTER TABS & TRANSACTION FEED                          */}
       {/* ========================================================= */}
       <div className="space-y-3.5 relative z-10 pt-2">
         <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-slate-800">
@@ -424,7 +508,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                   : "bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800"
               }`}
             >
-              All Moves ({data?.transfers?.length || 0})
+              Recent Blocks ({data?.transfers?.length || 0})
             </button>
 
             <button
@@ -481,7 +565,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
         </div>
 
         {/* Transfer Item List */}
-        <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+        <div className="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
           {filteredTransfers.length === 0 ? (
             <div className="py-12 text-center rounded-2xl bg-slate-950/40 border border-slate-800/80 space-y-2">
               <Info className="w-8 h-8 text-slate-500 mx-auto" />
@@ -505,7 +589,6 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                       : "bg-emerald-950/15 border-emerald-500/20 hover:border-emerald-500/40"
                   }`}
                 >
-                  {/* Left Column: Icons, Source & Direction */}
                   <div className="flex items-start gap-3">
                     <div
                       className={`p-2 rounded-xl mt-0.5 flex-shrink-0 ${
@@ -521,7 +604,6 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
 
                     <div className="space-y-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        {/* Impact Tier Badge */}
                         <span
                           className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider font-mono ${
                             item.impactTier === "MEGA_WHALE"
@@ -534,7 +616,6 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                           {item.impactTier.replace("_", " ")}
                         </span>
 
-                        {/* Source Tag */}
                         <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-md bg-slate-900 border border-slate-800 text-slate-400">
                           {isWave
                             ? "🔥 Market Maker Wave"
@@ -547,7 +628,6 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                         <span className="text-xs font-mono text-slate-400">{item.timeAgo}</span>
                       </div>
 
-                      {/* Sender -> Recipient Flow */}
                       <div className="flex flex-wrap items-center gap-1.5 text-xs text-slate-200 font-medium">
                         <span className="text-slate-300 font-semibold">{item.from}</span>
                         <span className="text-slate-500 font-bold">➔</span>
@@ -556,12 +636,10 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
                         </span>
                       </div>
 
-                      {/* Narrative Detail */}
                       <p className="text-[11px] text-slate-400 leading-snug">{item.details}</p>
                     </div>
                   </div>
 
-                  {/* Right Column: Amount & USD Value */}
                   <div className="flex flex-row md:flex-col items-center md:items-end justify-between md:justify-center border-t md:border-t-0 border-slate-800/80 pt-2 md:pt-0 gap-1 flex-shrink-0">
                     <span
                       className={`text-lg sm:text-xl font-black font-mono num-tabular tracking-tight ${
@@ -588,7 +666,7 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
       </div>
 
       {/* ========================================================= */}
-      {/* 4. WHALE ALERT API CONNECT MODAL                           */}
+      {/* 5. WHALE ALERT API CONNECT MODAL                           */}
       {/* ========================================================= */}
       {isKeyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">

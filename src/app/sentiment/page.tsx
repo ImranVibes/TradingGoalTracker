@@ -11,6 +11,7 @@ import { PairIcon } from "@/components/ui/PairIcon";
 import { SupportResistanceMatrix } from "@/components/sentiment/SupportResistanceMatrix";
 import { TradeGptDebateSection } from "@/components/sentiment/TradeGptDebateSection";
 import { MarketMakerSentinel } from "@/components/sentiment/MarketMakerSentinel";
+import { MacroMarketIntelligence } from "@/components/sentiment/MacroMarketIntelligence";
 import { WhaleTransferRadar } from "@/components/sentiment/WhaleTransferRadar";
 import { InstitutionalProSuite } from "@/components/sentiment/InstitutionalProSuite";
 import { BeginnerExecutiveSummary } from "@/components/sentiment/BeginnerExecutiveSummary";
@@ -453,7 +454,13 @@ export default function SentimentPage() {
             currentPrice={market?.lastPrice || 0}
           />
 
-          {/* 2. Live Whale Inflow & Market Maker Large Transfer Radar */}
+          {/* 2. Macro Market Intelligence (1h-4h Forward Prediction, Anomaly Radar, Cross-Exchange Matrix, BTC Correlation & Fear/Greed) */}
+          <MacroMarketIntelligence
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+          />
+
+          {/* 3. Live Whale Inflow & Market Maker Large Transfer Radar */}
           <WhaleTransferRadar
             symbol={activeSymbol}
             currentPrice={market?.lastPrice || 0}
