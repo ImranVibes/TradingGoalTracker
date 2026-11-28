@@ -14,6 +14,7 @@ import { MarketMakerSentinel } from "@/components/sentiment/MarketMakerSentinel"
 import { MacroMarketIntelligence } from "@/components/sentiment/MacroMarketIntelligence";
 import { WhaleTransferRadar } from "@/components/sentiment/WhaleTransferRadar";
 import { InstitutionalProSuite } from "@/components/sentiment/InstitutionalProSuite";
+import { OnChainIntelligenceSuite } from "@/components/sentiment/OnChainIntelligenceSuite";
 import { BeginnerExecutiveSummary } from "@/components/sentiment/BeginnerExecutiveSummary";
 import {
   evaluateMarketSentiment,
@@ -530,7 +531,13 @@ export default function SentimentPage() {
             currentPrice={market?.lastPrice || 0}
           />
 
-          {/* 4. Automated Support & Resistance Confluence Ladder */}
+          {/* 4. On-Chain & Anti-Manipulation Radar (Liquidations, Stablecoins, Spoofing, DEX Pools, Unlocks) */}
+          <OnChainIntelligenceSuite
+            symbol={activeSymbol}
+            currentPrice={market?.lastPrice || 0}
+          />
+
+          {/* 5. Automated Support & Resistance Confluence Ladder */}
           <SupportResistanceMatrix
             currentPrice={market?.lastPrice || 0}
             symbol={activeSymbol}

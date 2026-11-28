@@ -26,6 +26,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { SignalSentimentBadge, SignalSentimentType } from "./SignalSentimentBadge";
 
 interface UnifiedWhaleItem {
   id: string;
@@ -201,6 +202,18 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
   const isAccumulation = summary?.dominantState === "ACCUMULATION_SQUEEZE";
   const fwd = data?.forwardPrediction;
 
+  const getWhaleSentiment = (): SignalSentimentType => {
+    if (!summary) return "BALANCED";
+    if (isHighDumpRisk) {
+      return summary.dumpRiskScore >= 80 ? "TOO_MUCH_BEARISH" : "HIGHLY_BEARISH";
+    }
+    if (isAccumulation) {
+      return summary.dumpRiskScore <= 20 ? "TOO_MUCH_BULLISH" : "HIGHLY_BULLISH";
+    }
+    return "BALANCED";
+  };
+  const whaleSentiment = getWhaleSentiment();
+
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl relative overflow-hidden">
       {/* Background ambient radar glow */}
@@ -250,7 +263,12 @@ export const WhaleTransferRadar: React.FC<WhaleTransferRadarProps> = ({
         </div>
 
         {/* Time Window Selector & Action Controls */}
-        <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
+        <div className="flex flex-wrap items-center gap-3 self-start lg:self-center">
+          <SignalSentimentBadge
+            sentiment={whaleSentiment}
+            subLabel="Whale Volume Bias"
+          />
+
           {/* Time Window Switcher */}
           <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800">
             <span className="text-[10px] text-slate-400 font-bold px-1.5 uppercase font-mono">

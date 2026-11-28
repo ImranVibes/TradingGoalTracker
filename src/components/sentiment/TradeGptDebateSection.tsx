@@ -14,6 +14,7 @@ import {
   Compass,
 } from "lucide-react";
 import { TradeGptDebate } from "@/lib/technicalAnalysis";
+import { SignalSentimentBadge, SignalSentimentType } from "./SignalSentimentBadge";
 
 interface TradeGptDebateSectionProps {
   symbol: string;
@@ -39,6 +40,17 @@ export const TradeGptDebateSection: React.FC<TradeGptDebateSectionProps> = ({
 
   const isBullDominant = bullScore > bearScore;
 
+  const debateSentiment: SignalSentimentType =
+    netEdge === "BULLISH"
+      ? bullScore >= 75
+        ? "TOO_MUCH_BULLISH"
+        : "HIGHLY_BULLISH"
+      : netEdge === "BEARISH"
+      ? bearScore >= 75
+        ? "TOO_MUCH_BEARISH"
+        : "HIGHLY_BEARISH"
+      : "BALANCED";
+
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl">
       {/* Header */}
@@ -62,20 +74,27 @@ export const TradeGptDebateSection: React.FC<TradeGptDebateSectionProps> = ({
           </div>
         </div>
 
-        {/* Conviction Bar */}
-        <div className="flex items-center gap-3 min-w-[240px]">
-          <span className="text-xs font-mono font-black text-emerald-400">{bullScore}% Bull</span>
-          <div className="flex-1 h-3.5 rounded-full bg-slate-950 p-0.5 flex overflow-hidden border border-slate-800">
-            <div
-              className="bg-emerald-500 rounded-l-full transition-all duration-500"
-              style={{ width: `${bullScore}%` }}
-            />
-            <div
-              className="bg-rose-500 rounded-r-full transition-all duration-500"
-              style={{ width: `${bearScore}%` }}
-            />
+        {/* Top-Right Badge & Conviction Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <SignalSentimentBadge
+            sentiment={debateSentiment}
+            subLabel="AI Desk Verdict"
+          />
+
+          <div className="flex items-center gap-2 min-w-[200px]">
+            <span className="text-xs font-mono font-black text-emerald-400">{bullScore}% Bull</span>
+            <div className="flex-1 h-3.5 rounded-full bg-slate-950 p-0.5 flex overflow-hidden border border-slate-800">
+              <div
+                className="bg-emerald-500 rounded-l-full transition-all duration-500"
+                style={{ width: `${bullScore}%` }}
+              />
+              <div
+                className="bg-rose-500 rounded-r-full transition-all duration-500"
+                style={{ width: `${bearScore}%` }}
+              />
+            </div>
+            <span className="text-xs font-mono font-black text-rose-400">{bearScore}% Bear</span>
           </div>
-          <span className="text-xs font-mono font-black text-rose-400">{bearScore}% Bear</span>
         </div>
       </div>
 

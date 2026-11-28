@@ -13,6 +13,7 @@ import {
   ArrowUp,
   ArrowDown,
 } from "lucide-react";
+import { SignalSentimentBadge, SignalSentimentType } from "./SignalSentimentBadge";
 
 interface SupportResistanceLevel {
   price: number;
@@ -86,6 +87,23 @@ export const SupportResistanceMatrix: React.FC<SupportResistanceMatrixProps> = (
     }
   };
 
+  const getSrSentiment = (): SignalSentimentType => {
+    if (!data) return "BALANCED";
+    const isBull = superTrend?.direction === "BULLISH";
+    const isBear = superTrend?.direction === "BEARISH";
+    const rsi = rsi14 || 50;
+    const priceAboveEma = ema200 ? currentPrice > ema200 : isBull;
+
+    if (isBull && priceAboveEma && rsi >= 75) return "TOO_MUCH_BULLISH";
+    if (isBull && priceAboveEma) return "HIGHLY_BULLISH";
+    if (isBear && !priceAboveEma && rsi <= 25) return "TOO_MUCH_BEARISH";
+    if (isBear && !priceAboveEma) return "HIGHLY_BEARISH";
+    if (isBull) return "BULLISH";
+    if (isBear) return "BEARISH";
+    return "BALANCED";
+  };
+  const srSentiment = getSrSentiment();
+
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl">
       {/* Header */}
@@ -100,12 +118,19 @@ export const SupportResistanceMatrix: React.FC<SupportResistanceMatrixProps> = (
           </p>
         </div>
 
-        {confluenceSR?.rangeLocation && (
-          <div className="px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-200 flex items-center gap-2 shadow-sm">
-            <Target className="w-4 h-4 text-amber-400" />
-            <span>{confluenceSR.rangeLocation}</span>
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          <SignalSentimentBadge
+            sentiment={srSentiment}
+            subLabel="S/R & Trend Bias"
+          />
+
+          {confluenceSR?.rangeLocation && (
+            <div className="px-3.5 py-1.5 rounded-xl bg-slate-900 border border-slate-700/80 text-xs font-bold text-slate-200 flex items-center gap-2 shadow-sm">
+              <Target className="w-4 h-4 text-amber-400" />
+              <span>{confluenceSR.rangeLocation}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* S/R Price Ladder & Proximity Gauge */}

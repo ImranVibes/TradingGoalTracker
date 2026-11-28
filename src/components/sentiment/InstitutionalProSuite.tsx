@@ -27,6 +27,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
+import { SignalSentimentBadge, SignalSentimentType } from "./SignalSentimentBadge";
 
 interface ProAnalyticsResponse {
   success: boolean;
@@ -179,6 +180,21 @@ export const InstitutionalProSuite: React.FC<InstitutionalProSuiteProps> = ({
     );
   }, [data?.roi?.leverageTiers, selectedLeverage]);
 
+  const getProSentiment = (): SignalSentimentType => {
+    if (!data) return "BALANCED";
+    const isBullExpansion = data.smc?.structureState === "BULLISH_EXPANSION";
+    const isBearExpansion = data.smc?.structureState === "BEARISH_EXPANSION";
+    const isBullAbsorb = data.cvd?.divergence === "BULLISH_ABSORPTION";
+    const isBearAbsorb = data.cvd?.divergence === "BEARISH_ABSORPTION";
+
+    if (isBullExpansion && isBullAbsorb) return "TOO_MUCH_BULLISH";
+    if (isBullExpansion || isBullAbsorb) return "HIGHLY_BULLISH";
+    if (isBearExpansion && isBearAbsorb) return "TOO_MUCH_BEARISH";
+    if (isBearExpansion || isBearAbsorb) return "HIGHLY_BEARISH";
+    return "BALANCED";
+  };
+  const proSentiment = getProSentiment();
+
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl relative overflow-hidden">
       {/* Background ambient lighting */}
@@ -212,8 +228,13 @@ export const InstitutionalProSuite: React.FC<InstitutionalProSuiteProps> = ({
           </p>
         </div>
 
-        {/* Refresh & Status */}
-        <div className="flex items-center gap-2 self-start lg:self-center">
+        {/* Top-Right Badge & Controls */}
+        <div className="flex items-center gap-3 self-start lg:self-center">
+          <SignalSentimentBadge
+            sentiment={proSentiment}
+            subLabel="Smart Money Bias"
+          />
+
           <span className="text-[11px] font-mono text-slate-400 hidden sm:inline">
             Updated {lastRefreshedAt.toLocaleTimeString()}
           </span>

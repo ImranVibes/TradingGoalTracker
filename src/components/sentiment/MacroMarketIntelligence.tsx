@@ -23,6 +23,7 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
+import { SignalSentimentBadge, SignalSentimentType } from "./SignalSentimentBadge";
 
 interface MacroIntelligenceResponse {
   success: boolean;
@@ -131,6 +132,22 @@ export const MacroMarketIntelligence: React.FC<MacroMarketIntelligenceProps> = (
 
   const currentPrice = data?.binancePrice || initialPrice || 0;
 
+  const getMacroSentiment = (): SignalSentimentType => {
+    if (!data?.forwardForecast) return "BALANCED";
+    const dir = data.forwardForecast.predictedDirection;
+    const prob = data.forwardForecast.probabilityPct || 50;
+    if (dir === "BULLISH_REVERSAL") {
+      return prob >= 75 ? "TOO_MUCH_BULLISH" : "HIGHLY_BULLISH";
+    }
+    if (dir === "BEARISH_PULLBACK" || dir === "BEARISH_BREAKDOWN") {
+      return prob >= 75 ? "TOO_MUCH_BEARISH" : "HIGHLY_BEARISH";
+    }
+    if (dir === "BULLISH_CONTINUATION") return "BULLISH";
+    if (dir === "BEARISH_CONTINUATION") return "BEARISH";
+    return "BALANCED";
+  };
+  const macroSentiment = getMacroSentiment();
+
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl relative overflow-hidden">
       {/* Background ambient lighting */}
@@ -164,8 +181,13 @@ export const MacroMarketIntelligence: React.FC<MacroMarketIntelligenceProps> = (
           </p>
         </div>
 
-        {/* Global Fear & Greed Mini Pill */}
+        {/* Top-Right Telemetry Verdict & Controls */}
         <div className="flex items-center gap-3 self-start lg:self-center">
+          <SignalSentimentBadge
+            sentiment={macroSentiment}
+            subLabel="Macro 1h-4h Outlook"
+          />
+
           {data?.fearGreed && (
             <div className="px-3.5 py-2 rounded-2xl bg-slate-900 border border-slate-800 flex items-center gap-2.5">
               <div className="text-right">

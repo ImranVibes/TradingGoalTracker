@@ -20,6 +20,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 import { MarketMakerFlowResult } from "@/lib/marketMakerFlow";
+import { SignalSentimentBadge, SignalSentimentType } from "./SignalSentimentBadge";
 
 interface MarketMakerSentinelProps {
   flow: MarketMakerFlowResult | null;
@@ -95,6 +96,21 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
     return `$${usd.toFixed(0)}`;
   };
 
+  const mmSentiment: SignalSentimentType =
+    marketMakerState === "WHALE_DUMP_ALERT"
+      ? "TOO_MUCH_BEARISH"
+      : marketMakerState === "INSTITUTIONAL_ACCUMULATION"
+      ? "TOO_MUCH_BULLISH"
+      : marketMakerState === "SHORT_SQUEEZE_FUEL"
+      ? "HIGHLY_BULLISH"
+      : marketMakerState === "OPTIONS_GRAVITY_PULL"
+      ? (intelligence.options && intelligence.options.maxPainDistancePct > 2
+          ? "HIGHLY_BULLISH"
+          : intelligence.options && intelligence.options.maxPainDistancePct < -2
+          ? "HIGHLY_BEARISH"
+          : "BALANCED")
+      : "BALANCED";
+
   return (
     <div className="rounded-3xl border border-slate-800 bg-[#0c1322] p-6 sm:p-8 space-y-6 shadow-2xl">
       {/* ========================================================= */}
@@ -120,9 +136,13 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          <SignalSentimentBadge
+            sentiment={mmSentiment}
+            subLabel="MM Flow Verdict"
+          />
           <span
-            className={`px-4 py-1.5 rounded-full text-xs font-bold border flex items-center gap-2 shadow-sm ${
+            className={`px-4 py-2 rounded-2xl text-xs font-bold border flex items-center gap-2 shadow-sm ${
               marketMakerState === "WHALE_DUMP_ALERT"
                 ? "bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse"
                 : marketMakerState === "INSTITUTIONAL_ACCUMULATION"
@@ -297,17 +317,21 @@ export const MarketMakerSentinel: React.FC<MarketMakerSentinelProps> = ({
                     Deribit Institutional Options ({intelligence.options.currency})
                   </span>
                 </div>
-                <span
-                  className={`px-2.5 py-1 rounded text-xs font-bold border ${
+                <SignalSentimentBadge
+                  sentiment={
                     intelligence.options.sentiment === "BULLISH_CALL_DOMINANT"
-                      ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                      ? intelligence.options.putCallRatio < 0.6
+                        ? "TOO_MUCH_BULLISH"
+                        : "HIGHLY_BULLISH"
                       : intelligence.options.sentiment === "BEARISH_PUT_HEDGING"
-                      ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
-                      : "bg-slate-800 text-slate-300 border-slate-700"
-                  }`}
-                >
-                  {intelligence.options.sentiment.replace(/_/g, " ")}
-                </span>
+                      ? intelligence.options.putCallRatio > 1.4
+                        ? "TOO_MUCH_BEARISH"
+                        : "HIGHLY_BEARISH"
+                      : "BALANCED"
+                  }
+                  size="sm"
+                  subLabel="Options Bias"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-xs">
