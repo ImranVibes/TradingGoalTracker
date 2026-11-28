@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 
 const QUICK_PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "NEARUSDT", "QNTUSDT", "ZECUSDT", "DOGEUSDT"];
+const DEFAULT_MOST_SEARCHED = ["ETHUSDT", "SOLUSDT", "PEPEUSDT", "DOGEUSDT", "XRPUSDT", "SUIUSDT", "NEARUSDT"];
 
 interface LiveMarketSnapshot {
   lastPrice: number;
@@ -69,6 +70,7 @@ export default function SentimentPage() {
   const [symbolInput, setSymbolInput] = useState("BTCUSDT");
   const [activeSymbol, setActiveSymbol] = useState("BTCUSDT");
   const [quickPairs, setQuickPairs] = useState<string[]>(QUICK_PAIRS);
+  const [mostSearched, setMostSearched] = useState<string[]>(DEFAULT_MOST_SEARCHED);
 
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -118,10 +120,32 @@ export default function SentimentPage() {
   const [isCashflowModalOpen, setIsCashflowModalOpen] = useState(false);
   const [isGoalModalOpen, setIsGoalModalOpen] = useState(false);
 
+  const recordSearch = useCallback((sym: string) => {
+    const clean = sym.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (!clean || clean.startsWith("BTC")) return;
+    try {
+      const stored = localStorage.getItem("tracker_search_counts");
+      const counts: Record<string, number> = stored ? JSON.parse(stored) : {};
+      counts[clean] = (counts[clean] || 0) + 1;
+      localStorage.setItem("tracker_search_counts", JSON.stringify(counts));
+
+      const sorted = Object.keys(counts)
+        .filter((s) => !s.startsWith("BTC"))
+        .sort((a, b) => counts[b] - counts[a]);
+
+      const top = Array.from(new Set([...sorted, ...DEFAULT_MOST_SEARCHED])).slice(0, 8);
+      localStorage.setItem("tracker_most_searched_pairs", JSON.stringify(top));
+      setMostSearched(top);
+    } catch {}
+  }, []);
+
   const fetchLiveSentiment = useCallback(async (targetSym: string) => {
     const clean = targetSym.trim().toUpperCase().replace(/[^A-Z0-9]/g, "") || "BTCUSDT";
     setActiveSymbol(clean);
     setSymbolInput(clean);
+    if (!clean.startsWith("BTC")) {
+      recordSearch(clean);
+    }
     setFetching(true);
     setFetchError(null);
     try {
@@ -172,6 +196,17 @@ export default function SentimentPage() {
         }
       })
       .catch(() => {});
+
+    try {
+      const stored = localStorage.getItem("tracker_most_searched_pairs");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const filtered = parsed.filter((s: string) => !s.startsWith("BTC"));
+          if (filtered.length > 0) setMostSearched(filtered);
+        }
+      }
+    } catch {}
   }, [fetchLiveSentiment]);
 
   // Real-time recalculated report whenever live data loads OR user edits any input manually
@@ -319,6 +354,29 @@ export default function SentimentPage() {
                     activeSymbol === sym
                       ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
                       : "bg-slate-900 text-slate-400 border-slate-800 hover:text-white"
+                  }`}
+                >
+                  <PairIcon symbol={sym} size="xs" />
+                  {sym}
+                </button>
+              ))}
+            </div>
+
+            {/* Most Searched Pairs (Strictly Excluding Bitcoin) */}
+            <div className="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-800/60">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-purple-400 mr-1 flex items-center gap-1 font-mono">
+                <Flame className="w-3.5 h-3.5 text-purple-400" />
+                Most Searched:
+              </span>
+              {mostSearched.map((sym) => (
+                <button
+                  key={`most_${sym}`}
+                  type="button"
+                  onClick={() => fetchLiveSentiment(sym)}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-mono font-semibold border transition-all cursor-pointer ${
+                    activeSymbol === sym
+                      ? "bg-purple-500/20 text-purple-300 border-purple-500/50 shadow-sm shadow-purple-500/20"
+                      : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-purple-300 hover:border-purple-500/40"
                   }`}
                 >
                   <PairIcon symbol={sym} size="xs" />
